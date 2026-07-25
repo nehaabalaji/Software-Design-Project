@@ -1,3 +1,7 @@
+import ensure_deps
+
+ensure_deps.ensure()
+
 from app import create_app
 
 app = create_app()

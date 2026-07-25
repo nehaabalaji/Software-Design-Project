@@ -252,6 +252,10 @@ The team follows an **iterative, incremental development** process:
 | Authentication | Token-based (`Authorization: Bearer <token>`) |
 
 Dependencies are listed in `requirements.txt`. Install with `./setup.sh` or `setup.bat`.
+| Frontend | HTML / CSS / JavaScript |
+| Backend | Python / Flask |
+| Database | In-memory for now (database in Assignment 4) |
+| Authentication | Token-based auth |
 
 ---
 

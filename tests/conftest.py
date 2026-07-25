@@ -1,3 +1,7 @@
+import ensure_deps
+
+ensure_deps.ensure()
+
 import pytest
 
 from app import create_app
