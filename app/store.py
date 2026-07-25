@@ -18,7 +18,7 @@ class InMemoryStore:
         self._history = {}
         self._queue_entries = {}
         # teammates can add more dicts here later, for example:
-        # self._notifications = {}
+        self._notifications = {}
 
 
     def create_user(self, *, email, password_hash, role, first_name="", last_name=""):
@@ -66,6 +66,57 @@ class InMemoryStore:
         with self._lock:
             return self._tokens.pop(token, None) is not None
 
+    # ------------------------------------------------------------------
+    # Notifications (added for the Notification Module)
+    # ------------------------------------------------------------------
+    #
+
+    def add_notification(self, *, user_id, service_id=None, kind, message):
+        with self._lock:
+            service = self._services.get(service_id) if service_id else None
+            notification_id = str(uuid4())
+            notification = {
+                "id": notification_id,
+                "user_id": user_id,
+                "service_id": service_id,
+                "service_name": service["name"] if service else None,
+                "kind": kind,
+                "message": message,
+                "read": False,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            self._notifications[notification_id] = notification
+            return dict(notification)
+
+    def list_notifications(self, user_id):
+        with self._lock:
+            return [
+                dict(n) for n in self._notifications.values()
+                if n["user_id"] == user_id
+            ]
+
+    def get_notification(self, notification_id):
+        with self._lock:
+            notification = self._notifications.get(notification_id)
+            return dict(notification) if notification else None
+
+    def mark_notification_read(self, notification_id, user_id):
+        with self._lock:
+            notification = self._notifications.get(notification_id)
+            if notification is None or notification["user_id"] != user_id:
+                return None
+            notification["read"] = True
+            return dict(notification)
+
+    def mark_all_notifications_read(self, user_id):
+        with self._lock:
+            count = 0
+            for notification in self._notifications.values():
+                if notification["user_id"] == user_id and not notification["read"]:
+                    notification["read"] = True
+                    count += 1
+            return count
+
     def clear(self):
         with self._lock:
             self._users.clear()
@@ -74,6 +125,7 @@ class InMemoryStore:
             self._history.clear()
             self._services.clear()
             self._queue_entries.clear()
+            self._notifications.clear()
 
     # ------------------------------------------------------------------
     # Services (added for the Service Management Module)
