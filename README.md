@@ -137,15 +137,13 @@ The team will follow an **iterative, incremental development** process:
 ---
 
 ## Technology Stack
-(subject to change)
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | HTML / CSS|
-| Backend | _e.g., Node.js / Express_ |
-| Database | _e.g., PostgreSQL / MongoDB_ |
-| Notifications | _e.g., Email service / in-app push_ |
-| Authentication | _e.g., JWT-based auth_ |
+| Frontend | HTML / CSS / JavaScript |
+| Backend | Python / Flask |
+| Database | In-memory for now (database in Assignment 4) |
+| Authentication | Token-based auth |
 
 ---
 
