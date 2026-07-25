@@ -1,6 +1,6 @@
 # Service Management Module
 #
-# Supports create / update / list / delete of services.
+# Admins create/update/delete services; anyone can list/view them.
 # Each service has: name, description, expected duration (minutes),
 # priority level (low / medium / high / urgent).
 #
@@ -8,169 +8,143 @@
 #   GET    /api/services/           list all services (anyone)
 #   GET    /api/services/<id>       get a single service (anyone)
 #   POST   /api/services/           create a service (admin)
-#   PUT    /api/services/<id>       update a service (admin, partial update)
+#   PUT    /api/services/<id>       update a service (admin, partial)
 #   DELETE /api/services/<id>       delete a service (admin)
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, jsonify, request
 
-from app.store import store, _now
-from app.utils import (
-    admin_required,
-    error_response,
-    require_fields,
-    validate_string,
-    validate_int,
-    validate_choice,
-)
+from app.utils import admin_required
 
 services_bp = Blueprint("services", __name__)
 
-# --- field constraints -------------------------------------------------
-PRIORITY_LEVELS = ["low", "medium", "high", "urgent"]
-PRIORITY_WEIGHT = {"low": 1, "medium": 2, "high": 3, "urgent": 4}
-
+PRIORITY_LEVELS = {"low", "medium", "high", "urgent"}
 NAME_MIN_LEN, NAME_MAX_LEN = 2, 100
 DESC_MIN_LEN, DESC_MAX_LEN = 1, 500
 DURATION_MIN, DURATION_MAX = 1, 480  # minutes, up to 8 hours
 
 
 def _validate_service_payload(data, partial=False):
-    """
-    Validate a service create/update payload.
-    partial=True means "only validate fields that are present"
-    (used for PUT, where the caller may send just one field).
-    """
-    errors = []
+    """partial=True: only validate fields that are present (used for PUT)."""
+    errors = {}
 
-    if not partial:
-        missing = require_fields(data, ["name", "description", "duration", "priority"])
-        if missing:
-            errors.append(f"Missing required field(s): {', '.join(missing)}")
+    if "name" in data or not partial:
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors["name"] = "Name is required"
+        elif not (NAME_MIN_LEN <= len(name.strip()) <= NAME_MAX_LEN):
+            errors["name"] = f"Name must be {NAME_MIN_LEN}-{NAME_MAX_LEN} characters"
 
-    if not partial or "name" in data:
-        errors += validate_string(
-            data.get("name"), "name",
-            min_length=NAME_MIN_LEN, max_length=NAME_MAX_LEN, required=not partial,
-        )
-    if not partial or "description" in data:
-        errors += validate_string(
-            data.get("description"), "description",
-            min_length=DESC_MIN_LEN, max_length=DESC_MAX_LEN, required=not partial,
-        )
-    if not partial or "duration" in data:
-        errors += validate_int(
-            data.get("duration"), "duration",
-            min_value=DURATION_MIN, max_value=DURATION_MAX, required=not partial,
-        )
-    if not partial or "priority" in data:
-        errors += validate_choice(
-            data.get("priority"), "priority", PRIORITY_LEVELS, required=not partial,
-        )
+    if "description" in data or not partial:
+        description = data.get("description")
+        if not isinstance(description, str) or not description.strip():
+            errors["description"] = "Description is required"
+        elif not (DESC_MIN_LEN <= len(description.strip()) <= DESC_MAX_LEN):
+            errors["description"] = f"Description must be {DESC_MIN_LEN}-{DESC_MAX_LEN} characters"
+
+    if "duration" in data or not partial:
+        duration = data.get("duration")
+        if not isinstance(duration, int) or isinstance(duration, bool) or not (
+            DURATION_MIN <= duration <= DURATION_MAX
+        ):
+            errors["duration"] = f"Duration must be an integer between {DURATION_MIN} and {DURATION_MAX}"
+
+    if "priority" in data or not partial:
+        priority = data.get("priority")
+        if priority not in PRIORITY_LEVELS:
+            errors["priority"] = f"Priority must be one of: {', '.join(sorted(PRIORITY_LEVELS))}"
 
     return errors
 
 
-def _serialize(service):
-    data = dict(service)
-    data["priority_weight"] = PRIORITY_WEIGHT.get(service["priority"], 0)
-    data["queue_length"] = len(store.queues.get(service["id"], []))
-    return data
-
-
-@services_bp.route("/", methods=["GET"])
+@services_bp.get("/")
 def list_services():
-    services = sorted(store.services.values(), key=lambda s: s["id"])
-    return jsonify({
-        "services": [_serialize(s) for s in services],
-        "count": len(services),
-    }), 200
+    store = current_app.config["STORE"]
+    services = store.list_services()
+    for service in services:
+        service["queue_length"] = store.get_queue_length(service["id"])
+    services.sort(key=lambda s: s["created_at"])
+    return jsonify({"services": services, "count": len(services)}), 200
 
 
-@services_bp.route("/<int:service_id>", methods=["GET"])
+@services_bp.get("/<service_id>")
 def get_service(service_id):
-    service = store.services.get(service_id)
+    store = current_app.config["STORE"]
+    service = store.get_service(service_id)
     if not service:
-        return error_response("Service not found", 404)
-    return jsonify({"service": _serialize(service)}), 200
+        return jsonify({"message": "Service not found"}), 404
+    service["queue_length"] = store.get_queue_length(service_id)
+    return jsonify({"service": service}), 200
 
 
-@services_bp.route("/", methods=["POST"])
+@services_bp.post("/")
 @admin_required
-def create_service():
+def create_service(admin_user):
     data = request.get_json(silent=True) or {}
-
     errors = _validate_service_payload(data, partial=False)
     if errors:
-        return error_response("Validation failed", 400, details=errors)
+        return jsonify({"message": "Validation failed", "errors": errors}), 400
 
+    store = current_app.config["STORE"]
     name = data["name"].strip()
-    if any(s["name"].lower() == name.lower() for s in store.services.values()):
-        return error_response("A service with this name already exists", 409)
+    if store.service_name_exists(name):
+        return jsonify({"message": "A service with this name already exists"}), 409
 
-    sid = store.next_id("service")
-    service = {
-        "id": sid,
-        "name": name,
-        "description": data["description"].strip(),
-        "duration": data["duration"],
-        "priority": data["priority"],
-        "created_at": _now(),
-        "updated_at": _now(),
-    }
-    store.services[sid] = service
-    store.queues[sid] = []
-
-    return jsonify({"service": _serialize(service)}), 201
+    service = store.create_service(
+        name=name,
+        description=data["description"].strip(),
+        duration=data["duration"],
+        priority=data["priority"],
+    )
+    service["queue_length"] = 0
+    return jsonify({"service": service}), 201
 
 
-@services_bp.route("/<int:service_id>", methods=["PUT"])
+@services_bp.put("/<service_id>")
 @admin_required
-def update_service(service_id):
-    service = store.services.get(service_id)
+def update_service(admin_user, service_id):
+    store = current_app.config["STORE"]
+    service = store.get_service(service_id)
     if not service:
-        return error_response("Service not found", 404)
+        return jsonify({"message": "Service not found"}), 404
 
     data = request.get_json(silent=True) or {}
     if not data:
-        return error_response("Request body must contain at least one field to update", 400)
+        return jsonify({"message": "Request body must contain at least one field to update"}), 400
 
     errors = _validate_service_payload(data, partial=True)
     if errors:
-        return error_response("Validation failed", 400, details=errors)
+        return jsonify({"message": "Validation failed", "errors": errors}), 400
 
+    fields = {}
     if "name" in data:
         new_name = data["name"].strip()
-        clashes = any(
-            s["id"] != service_id and s["name"].lower() == new_name.lower()
-            for s in store.services.values()
-        )
-        if clashes:
-            return error_response("A service with this name already exists", 409)
-        service["name"] = new_name
-
+        if store.service_name_exists(new_name, exclude_id=service_id):
+            return jsonify({"message": "A service with this name already exists"}), 409
+        fields["name"] = new_name
     if "description" in data:
-        service["description"] = data["description"].strip()
+        fields["description"] = data["description"].strip()
     if "duration" in data:
-        service["duration"] = data["duration"]
+        fields["duration"] = data["duration"]
     if "priority" in data:
-        service["priority"] = data["priority"]
+        fields["priority"] = data["priority"]
 
-    service["updated_at"] = _now()
-    return jsonify({"service": _serialize(service)}), 200
+    updated = store.update_service(service_id, **fields)
+    updated["queue_length"] = store.get_queue_length(service_id)
+    return jsonify({"service": updated}), 200
 
 
-@services_bp.route("/<int:service_id>", methods=["DELETE"])
+@services_bp.delete("/<service_id>")
 @admin_required
-def delete_service(service_id):
-    service = store.services.get(service_id)
+def delete_service(admin_user, service_id):
+    store = current_app.config["STORE"]
+    service = store.get_service(service_id)
     if not service:
-        return error_response("Service not found", 404)
+        return jsonify({"message": "Service not found"}), 404
 
-    if store.queues.get(service_id):
-        return error_response(
-            "Cannot delete a service that has users currently in its queue", 409
-        )
+    if store.get_queue_length(service_id) > 0:
+        return jsonify(
+            {"message": "Cannot delete a service that has users currently in its queue"}
+        ), 409
 
-    del store.services[service_id]
-    store.queues.pop(service_id, None)
+    store.delete_service(service_id)
     return jsonify({"message": "Service deleted", "id": service_id}), 200

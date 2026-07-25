@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from threading import Lock
 from uuid import uuid4
 
+_PRIORITY_WEIGHT = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
+
 
 class InMemoryStore:
     def __init__(self):
@@ -133,6 +135,97 @@ class InMemoryStore:
         The Queue module is what actually appends/removes entries here."""
         with self._lock:
             return len(self._queue_entries.get(service_id, []))
+
+    # ------------------------------------------------------------------
+    # Queue entries (added for the Queue Management Module)
+    # ------------------------------------------------------------------
+
+    def join_queue(self, *, user_id, service_id):
+        with self._lock:
+            service = self._services.get(service_id)
+            if not service:
+                raise ValueError("Service not found")
+
+            entries = self._queue_entries.setdefault(service_id, [])
+            if any(e["user_id"] == user_id and e["status"] == "waiting" for e in entries):
+                raise ValueError("Already in this queue")
+
+            entry = {
+                "id": str(uuid4()),
+                "user_id": user_id,
+                "service_id": service_id,
+                "priority": service["priority"],
+                "status": "waiting",
+                "joined_at": datetime.now(timezone.utc).isoformat(),
+            }
+            entries.append(entry)
+            position = self._position_locked(service_id, entry["id"])
+            return dict(entry), position
+
+    def leave_queue(self, *, user_id, service_id):
+        with self._lock:
+            entries = self._queue_entries.get(service_id, [])
+            for i, entry in enumerate(entries):
+                if entry["user_id"] == user_id and entry["status"] == "waiting":
+                    return entries.pop(i)
+            return None
+
+    def list_queue(self, service_id):
+        with self._lock:
+            return self._sorted_entries_locked(service_id)
+
+    def get_queue_position(self, *, user_id, service_id):
+        with self._lock:
+            entries = self._sorted_entries_locked(service_id)
+            for i, entry in enumerate(entries):
+                if entry["user_id"] == user_id:
+                    return i + 1, entry
+            return None, None
+
+    def list_queue_entries_for_user(self, user_id):
+        with self._lock:
+            results = []
+            for service_id in self._queue_entries:
+                service = self._services.get(service_id)
+                duration = service["duration"] if service else 0
+                ordered = self._sorted_entries_locked(service_id)
+                for i, entry in enumerate(ordered):
+                    if entry["user_id"] == user_id and entry["status"] == "waiting":
+                        entry["service_name"] = service["name"] if service else None
+                        entry["position"] = i + 1
+                        entry["estimated_wait_minutes"] = (i + 1) * duration
+                        results.append(entry)
+            return results
+
+    def serve_next(self, service_id):
+        with self._lock:
+            entries = self._queue_entries.get(service_id)
+            if not entries:
+                return None
+            ordered = sorted(
+                entries,
+                key=lambda e: (-_PRIORITY_WEIGHT.get(e["priority"], 0), e["joined_at"]),
+            )
+            next_entry = ordered[0]
+            entries.remove(next_entry)
+            next_entry["status"] = "served"
+            return dict(next_entry)
+
+    def _sorted_entries_locked(self, service_id):
+        """Caller must already hold self._lock."""
+        entries = self._queue_entries.get(service_id, [])
+        ordered = sorted(
+            entries,
+            key=lambda e: (-_PRIORITY_WEIGHT.get(e["priority"], 0), e["joined_at"]),
+        )
+        return [dict(e) for e in ordered]
+
+    def _position_locked(self, service_id, entry_id):
+        """Caller must already hold self._lock."""
+        for i, entry in enumerate(self._sorted_entries_locked(service_id)):
+            if entry["id"] == entry_id:
+                return i + 1
+        return None
 
     # ------------------------------------------------------------------
     # History (added for the History Module)

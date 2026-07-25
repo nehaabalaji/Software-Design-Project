@@ -1,66 +1,22 @@
 # History Module
 #
-# Tracks queue participation history for users (in memory).
-# `add_history_entry(...)` is the integration point other modules
-# (e.g. the Queue module) call whenever something history-worthy
-# happens: a user joins a queue, leaves a queue, gets served, or is
-# marked a no-show.
+# Tracks queue participation history (join/leave/served/no-show).
+# `store.add_history_entry(...)` (in app/store.py) is the integration
+# point other modules -- the Queue module -- call whenever something
+# history-worthy happens.
 #
 # Endpoints:
 #   GET /api/history/mine    current user's own history (login required)
 #   GET /api/history/        all history, filterable (admin)
 #   GET /api/history/stats   aggregate stats (admin)
 
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, current_app, jsonify, request
 
-from app.store import store, _now
-from app.utils import login_required, admin_required, error_response
+from app.utils import admin_required, login_required
 
 history_bp = Blueprint("history", __name__)
 
 VALID_ACTIONS = {"joined", "left", "served", "no_show"}
-
-
-def add_history_entry(
-    user_id,
-    service_id,
-    action,
-    wait_time_minutes=None,
-    position_at_join=None,
-    notes=None,
-):
-    """
-    Record a queue-participation event.
-
-    Called by the Queue module (or anything else) whenever a
-    history-worthy event occurs. Not exposed as a REST endpoint on
-    its own -- it's a plain function other backend modules import.
-
-    Raises ValueError if `action` isn't a recognised value, so
-    integration bugs fail loudly instead of writing junk history.
-    """
-    if action not in VALID_ACTIONS:
-        raise ValueError(
-            f"Invalid history action '{action}'. Must be one of {sorted(VALID_ACTIONS)}"
-        )
-
-    user = store.users.get(user_id)
-    service = store.services.get(service_id)
-
-    entry = {
-        "id": store.next_id("history"),
-        "user_id": user_id,
-        "username": user["username"] if user else None,
-        "service_id": service_id,
-        "service_name": service["name"] if service else None,
-        "action": action,
-        "wait_time_minutes": wait_time_minutes,
-        "position_at_join": position_at_join,
-        "notes": notes,
-        "timestamp": _now(),
-    }
-    store.history.append(entry)
-    return entry
 
 
 def _filter_history(entries, user_id=None, service_id=None, action=None):
@@ -74,76 +30,77 @@ def _filter_history(entries, user_id=None, service_id=None, action=None):
     return result
 
 
-def _parse_int_arg(name):
-    """Read an optional int query param. Returns (value, error_message)."""
-    raw = request.args.get(name)
+def _parse_limit_arg():
+    raw = request.args.get("limit")
     if raw is None:
         return None, None
     try:
         return int(raw), None
     except ValueError:
-        return None, f"{name} must be an integer"
+        return None, "limit must be an integer"
 
 
-@history_bp.route("/mine", methods=["GET"])
+@history_bp.get("/mine")
 @login_required
-def my_history():
-    service_id, err = _parse_int_arg("service_id")
-    if err:
-        return error_response(err, 400)
+def my_history(user):
+    store = current_app.config["STORE"]
 
     action = request.args.get("action")
     if action and action not in VALID_ACTIONS:
-        return error_response(f"action must be one of {sorted(VALID_ACTIONS)}", 400)
+        return jsonify({"message": f"action must be one of {sorted(VALID_ACTIONS)}"}), 400
 
     entries = _filter_history(
-        store.history, user_id=g.current_user["id"], service_id=service_id, action=action
+        store.list_history(),
+        user_id=user["id"],
+        service_id=request.args.get("service_id"),
+        action=action,
     )
-    entries = sorted(entries, key=lambda e: e["id"], reverse=True)
+    entries.sort(key=lambda e: e["timestamp"], reverse=True)
 
-    limit, err = _parse_int_arg("limit")
+    limit, err = _parse_limit_arg()
     if err:
-        return error_response(err, 400)
+        return jsonify({"message": err}), 400
     if limit is not None:
         if limit < 1:
-            return error_response("limit must be a positive integer", 400)
+            return jsonify({"message": "limit must be a positive integer"}), 400
         entries = entries[:limit]
 
     return jsonify({"history": entries, "count": len(entries)}), 200
 
 
-@history_bp.route("/", methods=["GET"])
+@history_bp.get("/")
 @admin_required
-def all_history():
-    user_id, err = _parse_int_arg("user_id")
-    if err:
-        return error_response(err, 400)
-    service_id, err = _parse_int_arg("service_id")
-    if err:
-        return error_response(err, 400)
+def all_history(admin_user):
+    store = current_app.config["STORE"]
 
     action = request.args.get("action")
     if action and action not in VALID_ACTIONS:
-        return error_response(f"action must be one of {sorted(VALID_ACTIONS)}", 400)
+        return jsonify({"message": f"action must be one of {sorted(VALID_ACTIONS)}"}), 400
 
-    entries = _filter_history(store.history, user_id=user_id, service_id=service_id, action=action)
-    entries = sorted(entries, key=lambda e: e["id"], reverse=True)
+    entries = _filter_history(
+        store.list_history(),
+        user_id=request.args.get("user_id"),
+        service_id=request.args.get("service_id"),
+        action=action,
+    )
+    entries.sort(key=lambda e: e["timestamp"], reverse=True)
     return jsonify({"history": entries, "count": len(entries)}), 200
 
 
-@history_bp.route("/stats", methods=["GET"])
+@history_bp.get("/stats")
 @admin_required
-def history_stats():
-    entries = store.history
+def history_stats(admin_user):
+    store = current_app.config["STORE"]
+    entries = store.list_history()
     total = len(entries)
 
     by_action = {}
-    for e in entries:
-        by_action[e["action"]] = by_action.get(e["action"], 0) + 1
+    for entry in entries:
+        by_action[entry["action"]] = by_action.get(entry["action"], 0) + 1
 
     by_service = {}
-    for e in entries:
-        key = e["service_name"] or f"service:{e['service_id']}"
+    for entry in entries:
+        key = entry["service_name"] or f"service:{entry['service_id']}"
         by_service[key] = by_service.get(key, 0) + 1
 
     wait_times = [
