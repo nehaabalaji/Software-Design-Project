@@ -11,6 +11,8 @@ class InMemoryStore:
         self._users = {}
         self._users_by_email = {}
         self._tokens = {}
+        self._services = {}
+        self._services_by_name = {}
         # teammates can add more dicts here later, for example:
         # self._services = {}
         # self._queue_entries = {}
@@ -62,11 +64,69 @@ class InMemoryStore:
         with self._lock:
             return self._tokens.pop(token, None) is not None
 
+    # ---- Service Management (Samuel) ----
+
+    def create_service(self, *, name, description, expected_duration, priority):
+        with self._lock:
+            key = name.strip().lower()
+            if key in self._services_by_name:
+                raise ValueError("A service with that name already exists")
+
+            service_id = str(uuid4())
+            service = {
+                "id": service_id,
+                "name": name.strip(),
+                "description": description.strip(),
+                "expected_duration": expected_duration,
+                "priority": priority,
+                "is_open": True,
+            }
+            self._services[service_id] = service
+            self._services_by_name[key] = service_id
+            return dict(service)
+
+    def get_service(self, service_id):
+        with self._lock:
+            service = self._services.get(service_id)
+            return dict(service) if service else None
+
+    def list_services(self):
+        with self._lock:
+            return [dict(s) for s in self._services.values()]
+
+    def update_service(self, service_id, **fields):
+        with self._lock:
+            service = self._services.get(service_id)
+            if service is None:
+                return None
+
+            new_name = fields.get("name")
+            if new_name is not None:
+                key = new_name.strip().lower()
+                existing = self._services_by_name.get(key)
+                if existing is not None and existing != service_id:
+                    raise ValueError("A service with that name already exists")
+                self._services_by_name.pop(service["name"].strip().lower(), None)
+                self._services_by_name[key] = service_id
+
+            service.update(fields)
+            return dict(service)
+
+    def delete_service(self, service_id):
+        with self._lock:
+            service = self._services.pop(service_id, None)
+            if service is None:
+                return False
+            self._services_by_name.pop(service["name"].strip().lower(), None)
+            return True
+
     def clear(self):
         with self._lock:
             self._users.clear()
             self._users_by_email.clear()
             self._tokens.clear()
+            self._services.clear()
+            self._services_by_name.clear()
 
     @staticmethod
     def _public_user(user):

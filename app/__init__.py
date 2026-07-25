@@ -3,6 +3,7 @@ from flask_cors import CORS
 
 from app.auth import auth_bp
 from app.store import InMemoryStore
+from app.services import services_bp
 
 # Other modules (services, queues, notifications, history) are for the rest
 # of the team. When ready, import their blueprints and register them below.
@@ -19,6 +20,9 @@ def create_app(store=None):
 
     # Authentication Module (done)
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
+
+    # Service Management Module
+    app.register_blueprint(services_bp, url_prefix="/api/services")
 
     @app.get("/api/health")
     def health():
