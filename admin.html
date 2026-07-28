@@ -253,10 +253,10 @@
     <script>
       // Mock service data (no backend — Assignment 2)
       let SERVICES = [
-        { id: "s1", name: "Passport Renewal", duration: 25, queueLength: 8, open: true },
-        { id: "s2", name: "Account Opening", duration: 15, queueLength: 3, open: true },
-        { id: "s3", name: "Tech Support", duration: 40, queueLength: 15, open: true },
-        { id: "s4", name: "Billing Inquiry", duration: 10, queueLength: 2, open: false },
+        { id: "s1", name: "Passport Renewal", description: "Renew or replace an expired or lost passport.", duration: 25, priority: "high", queueLength: 8, open: true },
+        { id: "s2", name: "Account Opening", description: "Open a new checking or savings account.", duration: 15, priority: "medium", queueLength: 3, open: true },
+        { id: "s3", name: "Tech Support", description: "General troubleshooting for hardware and software issues.", duration: 40, priority: "medium", queueLength: 15, open: true },
+        { id: "s4", name: "Billing Inquiry", description: "Questions or disputes about a billing statement.", duration: 10, priority: "low", queueLength: 2, open: false },
       ];
 
       // Mock per-service queues (UI only — no backend in Assignment 2)
@@ -298,7 +298,7 @@
       const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       const FORWARD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 4 15 12 5 20"/><line x1="19" y1="5" x2="19" y2="19"/></svg>';
 
-      let state = { tab: "dashboard", queueServiceId: SERVICES[0].id };
+      let state = { tab: "dashboard", queueServiceId: SERVICES[0].id, editingServiceId: null };
 
       function go(tab) { state.tab = tab; render(); }
       function toggleService(id) {
@@ -308,6 +308,19 @@
       }
       window.go = go;
       window.toggleService = toggleService;
+
+      // ---- Service edit actions (UI simulation only) ----
+      function editService(id) {
+        state.editingServiceId = id;
+        state.tab = "service";
+        render();
+      }
+      function cancelEditService() {
+        state.editingServiceId = null;
+        render();
+      }
+      window.editService = editService;
+      window.cancelEditService = cancelEditService;
 
 // ---- Queue management actions (UI simulation only) ----
       function selectQueueService(id) {
@@ -389,10 +402,32 @@
       }
 
       function serviceScreen() {
+        const editing = SERVICES.find((s) => s.id === state.editingServiceId) || null;
+
+        const rows = SERVICES.map((s) => `
+          <div class="svc-row">
+            <div class="svc-info">
+              <div class="svc-name">${s.name}</div>
+              <div class="svc-pills">
+                <span class="pill">${USERS} ${s.queueLength} in queue</span>
+                <span class="pill">${CLOCK} ~${s.duration}m each</span>
+              </div>
+            </div>
+            <div class="svc-actions">
+              <span class="status-tag ${s.open ? "status-open" : "status-closed"}">${s.open ? "Open" : "Closed"}</span>
+              <button class="toggle-btn" onclick="editService('${s.id}')">Edit</button>
+            </div>
+          </div>`).join("");
+
         return `<div class="page">
           <h1>Service Management</h1>
           <p class="sub">Create or edit a service offered to users.</p>
+
+          <div class="section-label">Existing services</div>
+          <div class="svc-list">${rows}</div>
+
           <div class="form-card">
+            <div class="section-label" style="margin-top:0;">${editing ? `Editing "${editing.name}"` : "New service"}</div>
             <div class="form-success" id="form-success">${CHECK}<span>Service saved successfully.</span></div>
             <div class="form-summary" id="form-summary">
               <strong>Please fix the following:</strong>
@@ -400,20 +435,20 @@
             </div>
 
             <div class="field" id="f-name">
-              <label for="svc-name">Service Name <span class="char-count" id="name-count">0 / 100</span></label>
-              <input id="svc-name" type="text" maxlength="100" placeholder="e.g. Passport Renewal" />
+              <label for="svc-name">Service Name <span class="char-count" id="name-count">${editing ? editing.name.length : 0} / 100</span></label>
+              <input id="svc-name" type="text" maxlength="100" placeholder="e.g. Passport Renewal" value="${editing ? editing.name.replace(/"/g, "&quot;") : ""}" />
               <div class="field-error" id="e-name"></div>
             </div>
 
             <div class="field" id="f-desc">
               <label for="svc-desc">Description</label>
-              <textarea id="svc-desc" placeholder="Describe what this service is for."></textarea>
+              <textarea id="svc-desc" placeholder="Describe what this service is for.">${editing ? (editing.description || "") : ""}</textarea>
               <div class="field-error" id="e-desc"></div>
             </div>
 
             <div class="field" id="f-duration">
               <label for="svc-duration">Expected Duration <span class="hint">(minutes)</span></label>
-              <input id="svc-duration" type="number" min="1" step="1" placeholder="e.g. 15" />
+              <input id="svc-duration" type="number" min="1" step="1" placeholder="e.g. 15" value="${editing ? editing.duration : ""}" />
               <div class="field-error" id="e-duration"></div>
             </div>
 
@@ -421,14 +456,15 @@
               <label for="svc-priority">Priority Level</label>
               <select id="svc-priority">
                 <option value="">Select priority…</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
+                <option value="low" ${editing && editing.priority === "low" ? "selected" : ""}>Low</option>
+                <option value="medium" ${editing && editing.priority === "medium" ? "selected" : ""}>Medium</option>
+                <option value="high" ${editing && editing.priority === "high" ? "selected" : ""}>High</option>
               </select>
               <div class="field-error" id="e-priority"></div>
             </div>
 
-            <button class="primary" id="svc-save">Save service</button>
+            <button class="primary" id="svc-save">${editing ? "Update service" : "Save service"}</button>
+            ${editing ? `<button class="toggle-btn" type="button" onclick="cancelEditService()" style="margin-left:10px;">Cancel</button>` : ""}
           </div>
         </div>`;
       }
@@ -475,20 +511,27 @@
             return;
           }
 
-          // Valid — add to mock list (no backend in Assignment 2)
-          SERVICES.push({
-            id: "s" + (SERVICES.length + 1),
-            name: values.name.trim(),
-            duration: Number(values.duration),
-            queueLength: 0,
-            open: true,
-          });
+          // Valid — add or update the mock list (no backend in Assignment 2)
+          const editing = SERVICES.find((s) => s.id === state.editingServiceId);
+          if (editing) {
+            editing.name = values.name.trim();
+            editing.description = values.description.trim();
+            editing.duration = Number(values.duration);
+            editing.priority = values.priority;
+          } else {
+            SERVICES.push({
+              id: "s" + (SERVICES.length + 1),
+              name: values.name.trim(),
+              description: values.description.trim(),
+              duration: Number(values.duration),
+              priority: values.priority,
+              queueLength: 0,
+              open: true,
+            });
+          }
+          state.editingServiceId = null;
+          render();
           document.getElementById("form-success").classList.add("show");
-          document.getElementById("svc-name").value = "";
-          document.getElementById("svc-desc").value = "";
-          document.getElementById("svc-duration").value = "";
-          document.getElementById("svc-priority").value = "";
-          document.getElementById("name-count").textContent = "0 / 100";
         });
       }
 
