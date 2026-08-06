@@ -12,6 +12,40 @@ unimplemented stub.
 chmod +x setup.sh
 ./setup.sh
 source .venv/bin/activate
+```
+
+### 1a. MySQL (one-time, per teammate)
+
+The app now persists to MySQL instead of memory. Each teammate runs their own
+local server with the same schema — there's no shared live database to
+coordinate.
+
+```bash
+brew install mysql
+brew services start mysql
+
+mysql -u root -e "
+CREATE DATABASE queuesmart_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'queuesmart'@'localhost' IDENTIFIED BY 'queuesmart_dev_pw';
+GRANT ALL PRIVILEGES ON queuesmart_dev.* TO 'queuesmart'@'localhost';
+FLUSH PRIVILEGES;
+"
+```
+
+These are also the defaults in `app/config.py`, so no `.env` file is required
+unless your local MySQL differs (copy `.env.example` to `.env` if so).
+
+Create the tables (only needed once, and again any time `app/models.py`
+changes and a new migration is added):
+
+```bash
+export FLASK_APP=run.py
+flask db upgrade
+```
+
+### 1b. Run it
+
+```bash
 python run.py
 ```
 
@@ -21,20 +55,30 @@ API runs at `http://127.0.0.1:5000`. Health check: `GET /api/health`.
 > (System Settings → General → AirDrop & Handoff → turn it off), or run
 > `app.run(port=5001)` temporarily.
 
-Data lives in memory only — restarting the server (or the Flask debug
-auto-reloader picking up a file save) wipes all users/services/queues/history.
+Data now persists in MySQL (`app/sql_store.py`) across restarts. Tests still
+use the old in-memory store (`app/store.py`) so they stay fast and isolated —
+see Section 3.
 
 ---
 
 ## 2. How it fits together
 
 ```
-app/__init__.py     creates the Flask app, holds the shared InMemoryStore,
-                     registers each module's blueprint under /api/<name>
+app/__init__.py     creates the Flask app, picks the store, registers each
+                     module's blueprint under /api/<name>
 
-app/store.py         InMemoryStore — the single source of truth.
-                      Every module reads/writes through this, never through
-                      its own state. All mutations go through self._lock.
+app/store.py          InMemoryStore — used by tests (tests/conftest.py passes
+                       one in explicitly). Every module reads/writes through
+                       a `store`, never through its own state.
+
+app/sql_store.py       SQLStore — used by the real app (create_app() defaults
+                        to this). Same method names/return shapes as
+                        InMemoryStore, backed by MySQL via app/models.py.
+
+app/models.py           SQLAlchemy table definitions (users, tokens,
+                        services, queue_entries, history_entries,
+                        notifications). Schema changes go through Flask-Migrate:
+                        `flask db migrate -m "..."` then `flask db upgrade`.
 
 app/utils.py          login_required / admin_required decorators.
                        They call the wrapped view as fn(user, *args, **kwargs) —
@@ -138,8 +182,7 @@ working — register/login again.
 
 ## 4. Known gaps
 
-- `app/notifications.py` is an unimplemented stub (no blueprint registered).
-- No persistence — everything resets when the process restarts. Real DB is
-  planned for Assignment 4.
 - Frontend (`homescreen.html`, `admin.html`, etc.) is not yet wired to these
   live endpoints.
+- `queues.py` doesn't call `notify_joined` / `notify_almost_ready` yet, so
+  `/api/notifications` stays empty even after joining a queue.

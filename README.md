@@ -36,7 +36,24 @@ setup.bat
 
 If you see `No module named 'flask'`, the virtual environment is not active or setup was skipped. Run setup again, then activate `.venv` before `python run.py`.
 
-### 3. Start the backend API
+### 3. Set up MySQL and start the backend API
+
+The app persists to MySQL. One-time setup (see `BACKEND.md` §1a for details):
+
+```bash
+brew install mysql
+brew services start mysql
+mysql -u root -e "
+CREATE DATABASE queuesmart_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'queuesmart'@'localhost' IDENTIFIED BY 'queuesmart_dev_pw';
+GRANT ALL PRIVILEGES ON queuesmart_dev.* TO 'queuesmart'@'localhost';
+FLUSH PRIVILEGES;
+"
+export FLASK_APP=run.py
+flask db upgrade
+```
+
+Then start the server:
 
 ```bash
 python run.py
@@ -74,14 +91,17 @@ pytest -v
 | Queues / wait time | Stub for team | `app/queues.py` |
 | Notifications | Stub for team | `app/notifications.py` |
 | History | Stub for team | `app/history.py` |
-| Database | Next (Assignment 4) | Replace in-memory `InMemoryStore` |
+| Database | Done — MySQL | `app/models.py`, `app/sql_store.py`, `migrations/` |
 
 ### Wiring a new backend module
 
 1. Implement the blueprint in the stub file (e.g. `app/queues.py`).
 2. Register it in `app/__init__.py` (same pattern as auth).
 3. Reuse `login_required` / `admin_required` from `app/utils.py`.
-4. Store data on `InMemoryStore` in `app/store.py` until A4 adds a real database.
+4. Store data through `store.<method>(...)` — never add new state directly to a
+   blueprint. The real app uses `SQLStore` (`app/sql_store.py`, backed by
+   `app/models.py`); tests inject `InMemoryStore` (`app/store.py`) instead. Add
+   any new method to both so the two stay swappable.
 
 ---
 
@@ -94,7 +114,7 @@ pytest -v
 | GET | `/api/auth/me` | Needs `Authorization: Bearer <token>` |
 | POST | `/api/auth/logout` | Needs bearer token |
 
-Password must be at least 8 characters. Data is in memory only while the server is running (no database yet).
+Password must be at least 8 characters. Data persists in MySQL (see `BACKEND.md` for setup).
 
 Register example:
 

@@ -8,8 +8,11 @@ _ROOT = Path(__file__).resolve().parent
 _REQ = _ROOT / "requirements.txt"
 
 
+_REQUIRED_MODULES = ["flask", "flask_sqlalchemy", "flask_migrate", "pymysql", "dotenv"]
+
+
 def ensure():
-    if importlib.util.find_spec("flask") is not None:
+    if all(importlib.util.find_spec(mod) is not None for mod in _REQUIRED_MODULES):
         return
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-r", str(_REQ)],

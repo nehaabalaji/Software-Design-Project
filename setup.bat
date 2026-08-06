@@ -24,8 +24,9 @@ echo.
 echo Setup complete.
 echo Next steps:
 echo   1. Activate the environment:  .venv\Scripts\activate.bat
-echo   2. Start the API:             python run.py
-echo   3. Run tests ^(optional^):     pytest -v
+echo   2. Set up MySQL (one-time):    see BACKEND.md section 1a, then: flask db upgrade
+echo   3. Start the API:              python run.py
+echo   4. Run tests ^(optional^):     pytest -v
 echo.
 echo API will be at http://127.0.0.1:5000
 echo Open the HTML files in a browser for the frontend ^(login.html, etc.^).
