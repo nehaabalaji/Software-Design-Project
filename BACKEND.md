@@ -75,7 +75,7 @@ app/sql_store.py       SQLStore — used by the real app (create_app() defaults
                         to this). Same method names/return shapes as
                         InMemoryStore, backed by MySQL via app/models.py.
 
-app/models.py           SQLAlchemy table definitions (users, tokens,
+app/models.py           SQLAlchemy table definitions (UserCredentials, tokens,
                         services, queue_entries, history_entries,
                         notifications). Schema changes go through Flask-Migrate:
                         `flask db migrate -m "..."` then `flask db upgrade`.

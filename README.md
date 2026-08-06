@@ -95,7 +95,7 @@ mysql -u queuesmart -p queuesmart_dev
    "Public Key Retrieval is not allowed" error — if you hit that, go to
    **Edit Connection → Driver properties** and set `allowPublicKeyRetrieval`
    to `true` and `useSSL` to `false`, then test again.
-4. Finish. You should see `users`, `services`, `queue_entries`,
+4. Finish. You should see `UserCredentials`, `services`, `queue_entries`,
    `history_entries`, `tokens`, and `notifications`, plus `alembic_version`
    (tracks the schema migration version — not app data).
 

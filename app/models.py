@@ -8,7 +8,10 @@ from app.extensions import db
 
 
 class User(db.Model):
-    __tablename__ = "users"
+    # Required table per the project spec: UserCredentials (User ID, Email,
+    # Encrypted password, Role). first_name/last_name are extra profile
+    # fields the rest of the app already relies on.
+    __tablename__ = "UserCredentials"
 
     id = db.Column(db.String(36), primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
@@ -22,7 +25,7 @@ class Token(db.Model):
     __tablename__ = "tokens"
 
     token = db.Column(db.String(36), primary_key=True)
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("UserCredentials.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
@@ -42,7 +45,7 @@ class QueueEntry(db.Model):
     __tablename__ = "queue_entries"
 
     id = db.Column(db.String(36), primary_key=True)
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("UserCredentials.id"), nullable=False, index=True)
     service_id = db.Column(db.String(36), db.ForeignKey("services.id"), nullable=False, index=True)
     priority = db.Column(db.String(20), nullable=False)
     joined_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
