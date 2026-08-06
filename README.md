@@ -62,6 +62,43 @@ python run.py
 API: [http://127.0.0.1:5000](http://127.0.0.1:5000)  
 Health check: [http://127.0.0.1:5000/api/health](http://127.0.0.1:5000/api/health)
 
+### 3a. Connect to the database with a GUI client (optional)
+
+Anyone with repo access can open the local database directly — in DBeaver,
+TablePlus, MySQL Workbench, or the `mysql` CLI — once they've done the
+one-time setup in step 3. Connection details for the default local setup:
+
+| Field | Value |
+|-------|-------|
+| Host | `127.0.0.1` |
+| Port | `3306` |
+| Database | `queuesmart_dev` |
+| Username | `queuesmart` |
+| Password | `queuesmart_dev_pw` |
+
+These match the defaults in `app/config.py`. If you changed them via a local
+`.env` file, use your own values instead.
+
+**mysql CLI**
+
+```bash
+mysql -u queuesmart -p queuesmart_dev
+# password: queuesmart_dev_pw
+```
+
+**DBeaver (or similar GUI client)**
+
+1. Database → New Database Connection → **MySQL**.
+2. Enter the host/port/database/username/password from the table above.
+3. Click **Test Connection**. MySQL 8's default auth plugin
+   (`caching_sha2_password`) sometimes trips up drivers with a
+   "Public Key Retrieval is not allowed" error — if you hit that, go to
+   **Edit Connection → Driver properties** and set `allowPublicKeyRetrieval`
+   to `true` and `useSSL` to `false`, then test again.
+4. Finish. You should see `users`, `services`, `queue_entries`,
+   `history_entries`, `tokens`, and `notifications`, plus `alembic_version`
+   (tracks the schema migration version — not app data).
+
 ### 4. Open the frontend
 
 Open these files in a browser (or use a simple static server):
