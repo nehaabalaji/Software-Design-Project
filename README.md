@@ -53,7 +53,7 @@ Open these files in a browser (or use a simple static server):
 - `homescreen.html` (user)
 - `admin.html` (admin)
 
-Login/register UI is still mock-connected; the live auth API is under `/api/auth` (see below).
+Login/register UI now calls the live auth API under `/api/auth` (see below); the backend must be running for these pages to work.
 
 ### 5. Run tests
 

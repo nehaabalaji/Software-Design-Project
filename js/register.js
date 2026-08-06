@@ -25,14 +25,25 @@ document.addEventListener('DOMContentLoaded', () => {
     button.disabled = true;
     button.textContent = 'Creating account...';
 
-    // Mock registration — replace with API call in Assignment 3
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    const { ok, data } = await apiPost('/api/auth/register', { email, password });
+
+    if (!ok) {
+      button.disabled = false;
+      button.textContent = 'Register';
+      const fieldErrors = data.errors || {};
+      if (fieldErrors.email) showFieldError('email-field', 'email-error', fieldErrors.email);
+      if (fieldErrors.password) showFieldError('password-field', 'password-error', fieldErrors.password);
+      if (!fieldErrors.email && !fieldErrors.password) {
+        showFieldError('password-field', 'password-error', data.message || 'Registration failed');
+      }
+      return;
+    }
 
     card.innerHTML = `
       <div class="auth-success" role="status">
         <div class="auth-success__icon" aria-hidden="true">✓</div>
         <h2 class="auth-success__title">Registration Successful</h2>
-        <p class="auth-success__message">Validation passed. Ready to connect to backend.</p>
+        <p class="auth-success__message">Your account has been created. You can now sign in.</p>
       </div>
       <p class="auth-footer-link">
         <a href="login.html" class="auth-link">Back to sign in</a>

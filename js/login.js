@@ -24,8 +24,22 @@ document.addEventListener('DOMContentLoaded', () => {
     button.disabled = true;
     button.textContent = 'Signing in...';
 
-    // Mock login — replace with API call in Assignment 3
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    const { ok, data } = await apiPost('/api/auth/login', { email, password });
+
+    if (!ok) {
+      button.disabled = false;
+      button.textContent = 'Sign in';
+      const fieldErrors = data.errors || {};
+      if (fieldErrors.email) showFieldError('email-field', 'email-error', fieldErrors.email);
+      if (fieldErrors.password) showFieldError('password-field', 'password-error', fieldErrors.password);
+      if (!fieldErrors.email && !fieldErrors.password) {
+        showFieldError('password-field', 'password-error', data.message || 'Login failed');
+      }
+      return;
+    }
+
+    localStorage.setItem('queuesmart_token', data.token);
+    localStorage.setItem('queuesmart_user', JSON.stringify(data.user));
 
     window.location.href = 'home.html';
   });
