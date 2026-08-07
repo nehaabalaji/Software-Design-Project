@@ -1,4 +1,3 @@
-# In-memory storage for Assignment 3 (no real database yet).
 # Auth is implemented here. Other modules can add methods to this same store.
 
 from datetime import datetime, timezone
@@ -17,8 +16,8 @@ class InMemoryStore:
         self._services = {}
         self._history = {}
         self._queue_entries = {}
-        # teammates can add more dicts here later, for example:
         self._notifications = {}
+        self._profiles = {}
 
 
     def create_user(self, *, email, password_hash, role, first_name="", last_name=""):
@@ -66,10 +65,46 @@ class InMemoryStore:
         with self._lock:
             return self._tokens.pop(token, None) is not None
 
-    # ------------------------------------------------------------------
-    # Notifications (added for the Notification Module)
-    # ------------------------------------------------------------------
-    #
+    # User profiles
+
+    def create_profile(self, *, user_id, full_name, phone=None, preferences=""):
+        with self._lock:
+            if user_id not in self._users:
+                raise ValueError("User not found")
+            if any(p["user_id"] == user_id for p in self._profiles.values()):
+                raise ValueError("Profile already exists for this user")
+
+            now = datetime.now(timezone.utc).isoformat()
+            profile_id = str(uuid4())
+            profile = {
+                "id": profile_id,
+                "user_id": user_id,
+                "full_name": (full_name or "").strip(),
+                "phone": (phone or "").strip() or None,
+                "preferences": (preferences or "").strip(),
+                "created_at": now,
+                "updated_at": now,
+            }
+            self._profiles[profile_id] = profile
+            return dict(profile)
+
+    def get_profile_by_user_id(self, user_id):
+        with self._lock:
+            for profile in self._profiles.values():
+                if profile["user_id"] == user_id:
+                    return dict(profile)
+            return None
+
+    def update_profile(self, user_id, **fields):
+        with self._lock:
+            for profile in self._profiles.values():
+                if profile["user_id"] == user_id:
+                    profile.update(fields)
+                    profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    return dict(profile)
+            return None
+
+    # Notifications
 
     def add_notification(self, *, user_id, service_id=None, kind, message):
         with self._lock:
@@ -126,10 +161,9 @@ class InMemoryStore:
             self._services.clear()
             self._queue_entries.clear()
             self._notifications.clear()
+            self._profiles.clear()
 
-    # ------------------------------------------------------------------
-    # Services (added for the Service Management Module)
-    # ------------------------------------------------------------------
+    # Services
 
     def create_service(self, *, name, description, duration, priority):
         with self._lock:
@@ -188,9 +222,7 @@ class InMemoryStore:
         with self._lock:
             return len(self._queue_entries.get(service_id, []))
 
-    # ------------------------------------------------------------------
-    # Queue entries (added for the Queue Management Module)
-    # ------------------------------------------------------------------
+    # Queue entries
 
     def join_queue(self, *, user_id, service_id):
         with self._lock:
@@ -279,9 +311,7 @@ class InMemoryStore:
                 return i + 1
         return None
 
-    # ------------------------------------------------------------------
-    # History (added for the History Module)
-    # ------------------------------------------------------------------
+    # History
 
     def add_history_entry(self, *, user_id, service_id, action,
                            wait_time_minutes=None, position_at_join=None, notes=None):

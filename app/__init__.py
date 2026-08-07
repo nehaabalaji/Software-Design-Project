@@ -11,6 +11,7 @@ from app.services import services_bp
 from app.sql_store import SQLStore
 from app.notifications import notifications_bp
 from app import models  # noqa: F401 -- registers tables with SQLAlchemy for Flask-Migrate
+from app.profile import profile_bp
 
 migrate = Migrate()
 
@@ -42,6 +43,9 @@ def create_app(store=None):
 
     # Notification Module
     app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
+
+    # UserProfile Module (A4)
+    app.register_blueprint(profile_bp, url_prefix="/api/profile")
 
     @app.get("/api/health")
     def health():

@@ -77,3 +77,14 @@ class Notification(db.Model):
     message = db.Column(db.String(500), nullable=False)
     read = db.Column(db.Boolean, nullable=False, default=False)
     timestamp = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+class UserProfile(db.Model):
+    __tablename__ = "user_profiles"
+
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("UserCredentials.id"), unique=True, nullable=False, index=True)
+    full_name = db.Column(db.String(200), nullable=False, default="")
+    phone = db.Column(db.String(30), nullable=True)
+    preferences = db.Column(db.String(500), nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

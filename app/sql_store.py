@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import HistoryEntry, Notification, QueueEntry, Service, Token, User
+from app.models import HistoryEntry, Notification, QueueEntry, Service, Token, User, UserProfile
 
 _PRIORITY_WEIGHT = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
 
@@ -68,6 +68,45 @@ class SQLStore:
         return True
 
     # ------------------------------------------------------------------
+    # User profiles
+    # ------------------------------------------------------------------
+
+    def create_profile(self, *, user_id, full_name, phone=None, preferences=""):
+        if not db.session.get(User, user_id):
+            raise ValueError("User not found")
+        if UserProfile.query.filter_by(user_id=user_id).first():
+            raise ValueError("Profile already exists for this user")
+
+        profile = UserProfile(
+            id=str(uuid4()),
+            user_id=user_id,
+            full_name=(full_name or "").strip(),
+            phone=(phone or "").strip() or None,
+            preferences=(preferences or "").strip(),
+        )
+        db.session.add(profile)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            raise ValueError("Profile already exists for this user")
+        return self._profile_dict(profile)
+
+    def get_profile_by_user_id(self, user_id):
+        profile = UserProfile.query.filter_by(user_id=user_id).first()
+        return self._profile_dict(profile) if profile else None
+
+    def update_profile(self, user_id, **fields):
+        profile = UserProfile.query.filter_by(user_id=user_id).first()
+        if not profile:
+            return None
+        for key, value in fields.items():
+            setattr(profile, key, value)
+        profile.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return self._profile_dict(profile)
+
+    # ------------------------------------------------------------------
     # Notifications
     # ------------------------------------------------------------------
 
@@ -110,6 +149,7 @@ class SQLStore:
         return len(rows)
 
     def clear(self):
+        UserProfile.query.delete()
         Notification.query.delete()
         HistoryEntry.query.delete()
         QueueEntry.query.delete()
@@ -349,4 +389,16 @@ class SQLStore:
             "message": notification.message,
             "read": notification.read,
             "timestamp": _iso(notification.timestamp),
+        }
+
+    @staticmethod
+    def _profile_dict(profile):
+        return {
+            "id": profile.id,
+            "user_id": profile.user_id,
+            "full_name": profile.full_name,
+            "phone": profile.phone,
+            "preferences": profile.preferences,
+            "created_at": _iso(profile.created_at),
+            "updated_at": _iso(profile.updated_at),
         }
