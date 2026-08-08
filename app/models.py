@@ -30,15 +30,62 @@ class Token(db.Model):
 
 
 class Service(db.Model):
+    """Service offered by the organization.
+
+    Column mapping to the assignment spec:
+      id            → service_id (UUID string PK; consistent with other FKs)
+      name          → name (NOT NULL, non-empty)
+      description   → description (TEXT)
+      duration      → expected_duration (INT, must be > 0)
+      priority      → human-readable level (low/medium/high/urgent)
+      priority_level→ INT DEFAULT 0 (numeric form of priority)
+      created_at    → created_at
+    """
+
     __tablename__ = "services"
+    __table_args__ = (
+        db.CheckConstraint("CHAR_LENGTH(TRIM(name)) > 0", name="chk_services_name_not_empty"),
+        db.CheckConstraint("duration > 0", name="chk_services_duration_positive"),
+    )
 
     id = db.Column(db.String(36), primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False)
-    description = db.Column(db.String(500), nullable=False)
-    duration = db.Column(db.Integer, nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    duration = db.Column(db.Integer, nullable=False)  # expected_duration (minutes)
     priority = db.Column(db.String(20), nullable=False)
+    priority_level = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    managed_queue = db.relationship(
+        "Queue",
+        back_populates="service",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class Queue(db.Model):
+    """Managed queue for a service (open / closed).
+
+    Assignment columns:
+      queue_id, service_id (FK CASCADE), status ENUM('open','closed'), created_at
+    """
+
+    __tablename__ = "queues"
+
+    queue_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    service_id = db.Column(
+        db.String(36),
+        db.ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    status = db.Column(db.Enum("open", "closed", name="queue_status"), nullable=False, default="open")
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    service = db.relationship("Service", back_populates="managed_queue")
 
 
 class QueueEntry(db.Model):

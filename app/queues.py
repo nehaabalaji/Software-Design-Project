@@ -1,20 +1,22 @@
-# Queue Management + Wait-Time Estimation Module
+# Queue Management Module
 #
-# Users can join/leave a queue and see their position and estimated wait.
-# Administrators can view a service's full queue and serve the next person.
+# Managed queues (open/closed) — assignment data-layer APIs:
+#   POST /api/queues/                 create a queue for a service
+#   GET  /api/queues/                 list all queues
+#   GET  /api/queues/<queue_id>       get queue details
+#   PUT  /api/queues/<queue_id>/status  update status (open/closed)
 #
-# Ordering: priority (urgent > high > medium > low), then arrival time.
-# Estimated wait: position in queue * the service's expected duration.
-#
-# Endpoints:
-#   POST /api/queues/join            login required   body: {service_id}
-#   POST /api/queues/leave           login required   body: {service_id}
-#   GET  /api/queues/mine            login required
-#   GET  /api/queues/service/<id>    admin only
-#   POST /api/queues/serve-next      admin only        body: {service_id}
+# User join / leave / serve-next (existing behavior):
+#   POST /api/queues/join
+#   POST /api/queues/leave
+#   GET  /api/queues/mine
+#   GET  /api/queues/service/<service_id>
+#   POST /api/queues/serve-next
 
 from flask import Blueprint, current_app, jsonify, request
 
+from app.controllers import services_queues as ctrl
+from app.notifications import is_almost_ready, notify_almost_ready, notify_joined
 from app.utils import admin_required, login_required
 
 queues_bp = Blueprint("queues", __name__)
@@ -24,6 +26,32 @@ def _estimate_wait(service, position):
     duration = service["duration"] if service else 0
     return position * duration
 
+
+# ---- Managed queue CRUD (assignment) -----------------------------------------
+
+@queues_bp.post("/")
+@admin_required
+def create_queue(admin_user):
+    return ctrl.create_queue(request.get_json(silent=True) or {})
+
+
+@queues_bp.get("/")
+def list_queues():
+    return ctrl.list_queues()
+
+
+@queues_bp.get("/<int:queue_id>")
+def get_queue(queue_id):
+    return ctrl.get_queue(queue_id)
+
+
+@queues_bp.put("/<int:queue_id>/status")
+@admin_required
+def update_queue_status(admin_user, queue_id):
+    return ctrl.update_queue_status(queue_id, request.get_json(silent=True) or {})
+
+
+# ---- Join / leave / serve (people in line) -----------------------------------
 
 @queues_bp.post("/join")
 @login_required
@@ -38,6 +66,10 @@ def join_queue(user):
     if not service:
         return jsonify({"message": "Service not found"}), 404
 
+    managed = store.get_queue_for_service(service_id)
+    if managed and managed["status"] == "closed":
+        return jsonify({"message": "This queue is closed"}), 400
+
     try:
         entry, position = store.join_queue(user_id=user["id"], service_id=service_id)
     except ValueError as e:
@@ -51,6 +83,9 @@ def join_queue(user):
         wait_time_minutes=wait_minutes,
         position_at_join=position,
     )
+    notify_joined(store, user_id=user["id"], service_id=service_id, position=position)
+    if is_almost_ready(position):
+        notify_almost_ready(store, user_id=user["id"], service_id=service_id, position=position)
 
     entry["position"] = position
     entry["estimated_wait_minutes"] = wait_minutes
@@ -95,7 +130,13 @@ def service_queue(admin_user, service_id):
         entry["position"] = i + 1
         entry["estimated_wait_minutes"] = _estimate_wait(service, i + 1)
 
-    return jsonify({"service_id": service_id, "queue": entries, "count": len(entries)}), 200
+    managed = store.get_queue_for_service(service_id)
+    return jsonify({
+        "service_id": service_id,
+        "queue_status": managed["status"] if managed else None,
+        "queue": entries,
+        "count": len(entries),
+    }), 200
 
 
 @queues_bp.post("/serve-next")
@@ -116,4 +157,17 @@ def serve_next(admin_user):
         return jsonify({"message": "Queue is empty"}), 404
 
     store.add_history_entry(user_id=entry["user_id"], service_id=service_id, action="served")
+
+    # After serving, alert anyone who is now near the front
+    remaining = store.list_queue(service_id)
+    for i, waiting in enumerate(remaining):
+        position = i + 1
+        if is_almost_ready(position):
+            notify_almost_ready(
+                store,
+                user_id=waiting["user_id"],
+                service_id=service_id,
+                position=position,
+            )
+
     return jsonify({"served": entry}), 200

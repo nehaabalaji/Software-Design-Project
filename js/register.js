@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const email = form.email.value;
     const password = form.password.value;
+    const role = form.role ? form.role.value : 'User';
 
     clearFormErrors([
       { fieldId: 'email-field', errorId: 'email-error' },
@@ -25,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     button.disabled = true;
     button.textContent = 'Creating account...';
 
-    const { ok, data } = await apiPost('/api/auth/register', { email, password });
+    const { ok, data } = await apiPost('/api/auth/register', { email, password, role });
 
     if (!ok) {
       button.disabled = false;

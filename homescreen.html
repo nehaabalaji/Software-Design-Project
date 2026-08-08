@@ -776,47 +776,18 @@
       </div>
     </div>
 
+    <script src="js/api.js"></script>
+    <script src="js/session.js"></script>
     <script>
-      const SERVICES = [
-        { id: "s1", name: "Passport Renewal", wait: 24, open: 8 },
-        { id: "s2", name: "Account Opening", wait: 12, open: 3 },
-        { id: "s3", name: "Tech Support", wait: 40, open: 15 },
-        { id: "s4", name: "Billing Inquiry", wait: 6, open: 2 },
-      ];
-      const HISTORY = [
-        { date: "Jul 8, 2026", service: "Billing Inquiry", outcome: "Served" },
-        { date: "Jul 2, 2026", service: "Account Opening", outcome: "Served" },
-        {
-          date: "Jun 28, 2026",
-          service: "Tech Support",
-          outcome: "Left queue",
-        },
-        {
-          date: "Jun 15, 2026",
-          service: "Passport Renewal",
-          outcome: "Served",
-        },
-      ];
-      let NOTIFICATIONS = [
-        {
-          title: "Almost your turn",
-          text: "Billing Inquiry — 2 people ahead.",
-          time: "Just now",
-          unread: true,
-        },
-        {
-          title: "You were served",
-          text: "Account Opening completed.",
-          time: "8 days ago",
-          unread: true,
-        },
-        {
-          title: "Queue update",
-          text: "Tech Support wait time increased to 40 min.",
-          time: "2 weeks ago",
-          unread: false,
-        },
-      ];
+      const user = requireAuth({ userOnly: true });
+      if (!user) throw new Error("redirecting");
+
+      let SERVICES = [];
+      let HISTORY = [];
+      let NOTIFICATIONS = [];
+      let state = { tab: "dashboard", active: null };
+      let sel = null;
+
       const NAV = [
         {
           id: "dashboard",
@@ -850,21 +821,101 @@
       const CHEV =
         '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
 
-      let state = { tab: "dashboard", active: null };
-
-      function join(service) {
-        state.active = {
-          service,
-          position: Math.max(2, Math.round(service.open / 2)),
+      function mapService(s) {
+        const wait = (s.queue_length || 0) * (s.duration || 0);
+        return {
+          id: s.id,
+          name: s.name,
+          wait,
+          open: s.queue_length || 0,
+          duration: s.duration,
+          queue_status: s.queue_status || "open",
         };
+      }
+
+      async function refreshData() {
+        const [servicesRes, mineRes, historyRes, notifRes] = await Promise.all([
+          apiGet("/api/services/"),
+          apiGet("/api/queues/mine"),
+          apiGet("/api/history/mine"),
+          apiGet("/api/notifications/"),
+        ]);
+
+        if (servicesRes.ok) {
+          SERVICES = (servicesRes.data.services || [])
+            .filter((s) => (s.queue_status || "open") === "open")
+            .map(mapService);
+        }
+
+        if (mineRes.ok) {
+          const entries = mineRes.data.queue_entries || [];
+          if (entries.length) {
+            const e = entries[0];
+            state.active = {
+              service: {
+                id: e.service_id,
+                name: e.service_name || "Service",
+                duration: e.estimated_wait_minutes && e.position
+                  ? Math.round(e.estimated_wait_minutes / e.position)
+                  : 0,
+              },
+              position: e.position,
+              wait: e.estimated_wait_minutes,
+              service_id: e.service_id,
+            };
+          } else {
+            state.active = null;
+          }
+        }
+
+        if (historyRes.ok) {
+          HISTORY = (historyRes.data.history || historyRes.data.entries || []).map((h) => ({
+            date: (h.timestamp || "").slice(0, 10) || "—",
+            service: h.service_name || h.service_id || "Service",
+            outcome: h.action === "served" ? "Served" : h.action === "left" ? "Left queue" : h.action,
+          }));
+        }
+
+        if (notifRes.ok) {
+          NOTIFICATIONS = (notifRes.data.notifications || []).map((n) => ({
+            id: n.id,
+            title: n.kind === "almost_ready" ? "Almost your turn" : n.kind === "joined" ? "Joined queue" : "Update",
+            text: n.message,
+            time: (n.timestamp || "").replace("T", " ").slice(0, 16),
+            unread: !n.read,
+          }));
+        }
+      }
+
+      async function join(service) {
+        if (state.active) {
+          alert("You are already in a queue. Leave it before joining another.");
+          return;
+        }
+        const result = await apiPost("/api/queues/join", { service_id: service.id });
+        if (!result.ok) {
+          alert(result.data.message || "Could not join queue");
+          return;
+        }
+        await refreshData();
         state.tab = "status";
         render();
       }
-      function leave() {
-        state.active = null;
+
+      async function leave() {
+        if (!state.active) return;
+        const result = await apiPost("/api/queues/leave", {
+          service_id: state.active.service_id || state.active.service.id,
+        });
+        if (!result.ok) {
+          alert(result.data.message || "Could not leave queue");
+          return;
+        }
+        await refreshData();
         state.tab = "dashboard";
         render();
       }
+
       function go(tab) {
         state.tab = tab;
         render();
@@ -872,6 +923,7 @@
       window.join = join;
       window.leave = leave;
       window.go = go;
+      window.logout = logout;
 
       function renderNav() {
         document.getElementById("nav").innerHTML = NAV.map(
@@ -889,38 +941,42 @@
           ? `<button class="active-card" onclick="go('status')">
          <div class="active-top"><span class="active-tag">In queue</span>${CHEV}</div>
          <div class="active-name">${a.service.name}</div>
-         <div class="active-meta">Position ${a.position} &middot; ~${a.position * 4} min</div>
+         <div class="active-meta">Position ${a.position} &middot; ~${a.wait ?? a.position * (a.service.duration || 0)} min</div>
        </button>`
           : `<div class="empty-card">
          <div class="empty-title">You're not in any queue</div>
          <div class="empty-text">Join a service to track your spot in real time.</div>
          <button class="empty-btn" onclick="go('join')">Browse services</button>
        </div>`;
-        const cards = SERVICES.map(
-          (s) =>
-            `<div class="mini-card" onclick="join(${js(s)})">
+        const cards = SERVICES.length
+          ? SERVICES.map(
+              (s) =>
+                `<div class="mini-card" onclick='join(${JSON.stringify(s)})'>
        <div class="mini-name">${s.name}</div>
        <div class="mini-row">
          <span class="pill">${CLOCK} ${s.wait}m wait</span>
          <span class="pill">${USERS} ${s.open} waiting</span>
        </div>
      </div>`,
-        ).join("");
+            ).join("")
+          : `<div class="empty-card"><div class="empty-title">No open services</div><div class="empty-text">Check back soon — an admin needs to open a queue.</div></div>`;
+        const notifPreview = NOTIFICATIONS.slice(0, 2)
+          .map(
+            (n) =>
+              `<div class="notif"><span class="notif-dot ${n.unread ? "fresh" : ""}"></span><div><div class="notif-title">${n.title}</div><div class="notif-text">${n.text}</div></div></div>`,
+          )
+          .join("") || `<div class="empty-text">No notifications yet.</div>`;
         return `<div class="page">
-    <h1>Good afternoon, Alex</h1>
+    <h1>Hi, ${displayName(user)}</h1>
     <p class="sub">Here's what's happening right now.</p>
     ${activeBlock}
     <div class="section-label">Active services</div>
     <div class="grid">${cards}</div>
     <div class="section-label">Notifications</div>
-    <div class="notif-list">
-      <div class="notif"><span class="notif-dot fresh"></span><div><div class="notif-title">Almost your turn</div><div class="notif-text">Billing Inquiry — 2 people ahead.</div></div></div>
-      <div class="notif"><span class="notif-dot"></span><div><div class="notif-title">You were served</div><div class="notif-text">Account Opening completed Jul 2.</div></div></div>
-    </div>
+    <div class="notif-list">${notifPreview}</div>
   </div>`;
       }
 
-      let sel = null;
       function joinScreen() {
         const service = SERVICES.find((s) => s.id === sel);
         const rows = SERVICES.map((s) => {
@@ -929,11 +985,11 @@
       <div><div class="row-name">${s.name}</div><div class="row-sub">${s.open} people waiting &middot; ~${s.wait} min</div></div>
       <div class="radio ${on ? "on" : ""}">${on ? CHECK : ""}</div>
     </button>`;
-        }).join("");
+        }).join("") || `<div class="empty-card"><div class="empty-title">No open services</div></div>`;
         const est = service
           ? `<div class="est-box">
       <div><div class="est-label">Estimated wait</div><div class="est-value">~${service.wait} min</div></div>
-      <button class="join-btn" ${state.active ? "disabled" : ""} onclick="join(${js(service)})">${state.active ? "Already in a queue" : "Join queue"}</button>
+      <button class="join-btn" ${state.active ? "disabled" : ""} onclick='join(${JSON.stringify(service)})'>${state.active ? "Already in a queue" : "Join queue"}</button>
     </div>`
           : "";
         return `<div class="page"><h1>Join a queue</h1><p class="sub">Pick a service to see the wait.</p><div class="list">${rows}</div>${est}</div>`;
@@ -962,29 +1018,27 @@
     </div>`;
           })
           .join("");
+        const wait = a.wait ?? a.position * (a.service.duration || 0);
         return `<div class="page"><h1>Queue status</h1><p class="sub">${a.service.name}</p>
     <div class="status-grid">
-      <div class="pos-card"><div class="pos-label">Your position</div><div class="pos-num">${a.position}</div><div class="pos-wait">Estimated wait ~${a.position * 4} min</div></div>
+      <div class="pos-card"><div class="pos-label">Your position</div><div class="pos-num">${a.position}</div><div class="pos-wait">Estimated wait ~${wait} min</div></div>
       <div class="steps-card"><div class="section-label">Progress</div><div class="steps">${stepEls}</div>
         <button class="leave-btn" onclick="leave()">${X} Leave queue</button></div>
     </div></div>`;
       }
 
       function historyScreen() {
-        const rows = HISTORY.map(
-          (h) =>
-            `<div class="trow"><span class="t-service">${h.service}</span><span class="t-date">${h.date}</span>
+        const rows = HISTORY.length
+          ? HISTORY.map(
+              (h) =>
+                `<div class="trow"><span class="t-service">${h.service}</span><span class="t-date">${h.date}</span>
       <span class="right"><span class="outcome ${h.outcome === "Served" ? "served" : "left"}">${h.outcome}</span></span></div>`,
-        ).join("");
+            ).join("")
+          : `<div class="empty-card"><div class="empty-title">No history yet</div></div>`;
         return `<div class="page"><h1>History</h1><p class="sub">Your past queues.</p>
     <div class="table"><div class="thead"><span>Service</span><span>Date</span><span class="right">Outcome</span></div>${rows}</div></div>`;
       }
 
-      function js(o) {
-        return JSON.stringify(o).replace(/"/g, "&quot;");
-      }
-
-      // --- Notifications ---
       let notifsOpen = false;
 
       function renderNotifPanel() {
@@ -1003,7 +1057,7 @@
                   <button class="notif-dismiss" title="Dismiss" onclick="dismissNotif(event, ${i})">${X}</button>
                 </div>`,
             ).join("")
-          : `<div class="notif-empty">You're all caught up 🎉</div>`;
+          : `<div class="notif-empty">You're all caught up</div>`;
         const clearBtn = NOTIFICATIONS.length
           ? `<button class="notif-clear" onclick="clearNotifs(event)">Clear all</button>`
           : "";
@@ -1017,9 +1071,8 @@
 
       function updateBellDot() {
         const hasUnread = NOTIFICATIONS.some((n) => n.unread);
-        document
-          .getElementById("bell-dot")
-          .classList.toggle("hidden", !hasUnread);
+        const dot = document.getElementById("bell-dot");
+        if (dot) dot.classList.toggle("hidden", !hasUnread);
       }
 
       function toggleNotifs(e) {
@@ -1027,29 +1080,29 @@
         notifsOpen = !notifsOpen;
         const panel = document.getElementById("notif-panel");
         panel.classList.toggle("hidden", !notifsOpen);
-        if (notifsOpen) {
-          renderNotifPanel();
-        }
+        if (notifsOpen) renderNotifPanel();
       }
 
-      function dismissNotif(e, index) {
+      async function dismissNotif(e, index) {
         e.stopPropagation();
+        const n = NOTIFICATIONS[index];
+        if (n && n.id) await apiPost(`/api/notifications/${n.id}/read`, {});
         NOTIFICATIONS.splice(index, 1);
         renderNotifPanel();
         updateBellDot();
       }
 
-      function clearNotifs(e) {
+      async function clearNotifs(e) {
         e.stopPropagation();
+        await apiPost("/api/notifications/read-all", {});
         NOTIFICATIONS = [];
         renderNotifPanel();
         updateBellDot();
       }
 
-      // Close the panel when clicking anywhere outside it
       document.addEventListener("click", (e) => {
         const wrap = document.querySelector(".bell-wrap");
-        if (notifsOpen && !wrap.contains(e.target)) {
+        if (notifsOpen && wrap && !wrap.contains(e.target)) {
           notifsOpen = false;
           document.getElementById("notif-panel").classList.add("hidden");
         }
@@ -1068,9 +1121,25 @@
           history: historyScreen,
         };
         document.getElementById("main").innerHTML = views[state.tab]();
+        updateBellDot();
       }
-      render();
-      updateBellDot();
+
+      (async function init() {
+        const logoutBtn = document.querySelector(".topbar .bell");
+        // Add logout control next to bell if missing
+        const topbar = document.querySelector(".topbar");
+        if (topbar && !document.getElementById("logout-btn")) {
+          const btn = document.createElement("button");
+          btn.id = "logout-btn";
+          btn.className = "toggle-btn";
+          btn.textContent = "Log out";
+          btn.style.marginLeft = "12px";
+          btn.onclick = () => logout();
+          topbar.appendChild(btn);
+        }
+        await refreshData();
+        render();
+      })();
     </script>
   </body>
 </html>

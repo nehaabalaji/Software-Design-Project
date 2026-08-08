@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import HistoryEntry, Notification, QueueEntry, Service, Token, User, UserProfile
+from app.models import HistoryEntry, Notification, Queue, QueueEntry, Service, Token, User, UserProfile
 
 _PRIORITY_WEIGHT = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
 
@@ -153,6 +153,7 @@ class SQLStore:
         Notification.query.delete()
         HistoryEntry.query.delete()
         QueueEntry.query.delete()
+        Queue.query.delete()
         Token.query.delete()
         Service.query.delete()
         User.query.delete()
@@ -162,10 +163,16 @@ class SQLStore:
     # Services
     # ------------------------------------------------------------------
 
-    def create_service(self, *, name, description, duration, priority):
+    def create_service(self, *, name, description, duration, priority, priority_level=None):
+        if priority_level is None:
+            priority_level = _PRIORITY_WEIGHT.get(priority, 0)
         service = Service(
-            id=str(uuid4()), name=name, description=description,
-            duration=duration, priority=priority,
+            id=str(uuid4()),
+            name=name,
+            description=description,
+            duration=duration,
+            priority=priority,
+            priority_level=priority_level,
         )
         db.session.add(service)
         try:
@@ -211,6 +218,43 @@ class SQLStore:
         return QueueEntry.query.filter_by(service_id=service_id).count()
 
     # ------------------------------------------------------------------
+    # Managed queues (open / closed) — assignment Queue table
+    # ------------------------------------------------------------------
+
+    def create_managed_queue(self, *, service_id, status="open"):
+        if not db.session.get(Service, service_id):
+            raise ValueError("Service not found")
+        if Queue.query.filter_by(service_id=service_id).first():
+            raise ValueError("A queue already exists for this service")
+        queue = Queue(
+            service_id=service_id,
+            status=status,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.session.add(queue)
+        db.session.commit()
+        return self._managed_queue_dict(queue)
+
+    def list_managed_queues(self):
+        return [self._managed_queue_dict(q) for q in Queue.query.order_by(Queue.queue_id).all()]
+
+    def get_managed_queue(self, queue_id):
+        queue = db.session.get(Queue, queue_id)
+        return self._managed_queue_dict(queue) if queue else None
+
+    def get_queue_for_service(self, service_id):
+        queue = Queue.query.filter_by(service_id=service_id).first()
+        return self._managed_queue_dict(queue) if queue else None
+
+    def update_managed_queue_status(self, queue_id, status):
+        queue = db.session.get(Queue, queue_id)
+        if not queue:
+            return None
+        queue.status = status
+        db.session.commit()
+        return self._managed_queue_dict(queue)
+
+    # ------------------------------------------------------------------
     # Queue entries
     # ------------------------------------------------------------------
 
@@ -240,7 +284,13 @@ class SQLStore:
         return entry_dict
 
     def list_queue(self, service_id):
-        return [self._queue_entry_dict(e) for e in self._sorted_entries(service_id)]
+        results = []
+        for e in self._sorted_entries(service_id):
+            entry = self._queue_entry_dict(e)
+            user = db.session.get(User, e.user_id)
+            entry["user_email"] = user.email if user else None
+            results.append(entry)
+        return results
 
     def get_queue_position(self, *, user_id, service_id):
         entries = self._sorted_entries(service_id)
@@ -348,8 +398,18 @@ class SQLStore:
             "description": service.description,
             "duration": service.duration,
             "priority": service.priority,
+            "priority_level": service.priority_level,
             "created_at": _iso(service.created_at),
             "updated_at": _iso(service.updated_at),
+        }
+
+    @staticmethod
+    def _managed_queue_dict(queue):
+        return {
+            "queue_id": queue.queue_id,
+            "service_id": queue.service_id,
+            "status": queue.status,
+            "created_at": _iso(queue.created_at),
         }
 
     @staticmethod

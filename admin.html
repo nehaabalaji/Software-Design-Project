@@ -227,8 +227,9 @@
         <div class="side-foot">
           <div class="avatar">AD</div>
           <div>
-            <div class="avatar-name">Admin</div>
+            <div class="avatar-name" id="admin-name">Admin</div>
             <div class="avatar-sub">Administrator</div>
+            <button class="toggle-btn" type="button" onclick="logout()" style="margin-top:8px;">Log out</button>
           </div>
         </div>
       </aside>
@@ -250,36 +251,69 @@
     </div>
 
     <script src="js/validation.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/session.js"></script>
     <script>
-      // Mock service data (no backend — Assignment 2)
-      let SERVICES = [
-        { id: "s1", name: "Passport Renewal", description: "Renew or replace an expired or lost passport.", duration: 25, priority: "high", queueLength: 8, open: true },
-        { id: "s2", name: "Account Opening", description: "Open a new checking or savings account.", duration: 15, priority: "medium", queueLength: 3, open: true },
-        { id: "s3", name: "Tech Support", description: "General troubleshooting for hardware and software issues.", duration: 40, priority: "medium", queueLength: 15, open: true },
-        { id: "s4", name: "Billing Inquiry", description: "Questions or disputes about a billing statement.", duration: 10, priority: "low", queueLength: 2, open: false },
-      ];
+      const adminUser = requireAuth({ adminOnly: true });
+      if (!adminUser) throw new Error("redirecting");
 
-      // Mock per-service queues (UI only — no backend in Assignment 2)
-      let QUEUES = {
-        s1: [
-          { id: "u1", name: "Mahmoud Masoud", note: "Renewal, expires next month", joined: "9:02 AM" },
-          { id: "u2", name: "Nehaa Balaji", note: "First-time application", joined: "9:14 AM" },
-          { id: "u3", name: "Vasavi K Chenna", note: "Renewal, lost passport", joined: "9:20 AM" },
-          { id: "u4", name: "Samuel Parsons", note: "Renewal", joined: "9:31 AM" },
-        ],
-        s2: [
-          { id: "u5", name: "Diego Fernandez", note: "New checking account", joined: "9:05 AM" },
-          { id: "u6", name: "Emily Chen", note: "Joint account setup", joined: "9:18 AM" },
-        ],
-        s3: [
-          { id: "u7", name: "Sam Patel", note: "Laptop won't boot", joined: "8:50 AM" },
-          { id: "u8", name: "Olivia Brooks", note: "Password reset", joined: "8:57 AM" },
-          { id: "u9", name: "Noah Kim", note: "Software install", joined: "9:03 AM" },
-        ],
-        s4: [
-          { id: "u10", name: "Grace Lee", note: "Disputed charge", joined: "9:40 AM" },
-        ],
-      };
+      // Services / managed queues are loaded from the MySQL-backed API.
+      let SERVICES = [];
+      let QUEUES = {};
+      let MANAGED_QUEUES = {}; // service_id -> { queue_id, status }
+
+      function mapApiService(s) {
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description || "",
+          duration: s.duration,
+          priority: s.priority,
+          queueLength: s.queue_length || 0,
+          open: (s.queue_status || "open") === "open",
+        };
+      }
+
+      async function loadServicesFromApi() {
+        const result = await apiGet("/api/services/");
+        if (!result.ok) {
+          console.warn("Could not load services from API:", result.data.message || result.status);
+          return;
+        }
+        SERVICES = (result.data.services || []).map(mapApiService);
+        MANAGED_QUEUES = {};
+        const qResult = await apiGet("/api/queues/");
+        if (qResult.ok) {
+          (qResult.data.queues || []).forEach((q) => {
+            MANAGED_QUEUES[q.service_id] = q;
+            const svc = SERVICES.find((s) => s.id === q.service_id);
+            if (svc) svc.open = q.status === "open";
+          });
+        }
+        if (!state.queueServiceId && SERVICES[0]) state.queueServiceId = SERVICES[0].id;
+        if (SERVICES.length && !SERVICES.find((s) => s.id === state.queueServiceId)) {
+          state.queueServiceId = SERVICES[0].id;
+        }
+        await loadLiveQueue(state.queueServiceId);
+      }
+
+      async function loadLiveQueue(serviceId) {
+        if (!serviceId) return;
+        const result = await apiGet(`/api/queues/service/${serviceId}`);
+        if (!result.ok) {
+          QUEUES[serviceId] = [];
+          return;
+        }
+        QUEUES[serviceId] = (result.data.queue || []).map((e, i) => ({
+          id: e.id || e.user_id,
+          user_id: e.user_id,
+          name: e.user_email || e.user_id || `User ${i + 1}`,
+          note: `Priority: ${e.priority || "—"}`,
+          joined: (e.joined_at || "").replace("T", " ").slice(0, 16),
+        }));
+        const svc = SERVICES.find((s) => s.id === serviceId);
+        if (svc) svc.queueLength = QUEUES[serviceId].length;
+      }
 
       const NAV = [
         { id: "dashboard", label: "Admin Dashboard",
@@ -298,12 +332,33 @@
       const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       const FORWARD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 4 15 12 5 20"/><line x1="19" y1="5" x2="19" y2="19"/></svg>';
 
-      let state = { tab: "dashboard", queueServiceId: SERVICES[0].id, editingServiceId: null };
+      let state = { tab: "dashboard", queueServiceId: null, editingServiceId: null };
 
       function go(tab) { state.tab = tab; render(); }
-      function toggleService(id) {
+      async function toggleService(id) {
         const s = SERVICES.find((x) => x.id === id);
-        if (s) s.open = !s.open;
+        const managed = MANAGED_QUEUES[id];
+        if (!s || !managed) {
+          // Fallback: create a managed queue then set status
+          if (!s) return;
+          const created = await apiPost("/api/queues/", { service_id: id, status: s.open ? "closed" : "open" });
+          if (created.ok) {
+            MANAGED_QUEUES[id] = created.data.queue;
+            s.open = created.data.queue.status === "open";
+            render();
+          } else {
+            alert(created.data.message || "Could not update queue status");
+          }
+          return;
+        }
+        const nextStatus = s.open ? "closed" : "open";
+        const result = await apiPut(`/api/queues/${managed.queue_id}/status`, { status: nextStatus });
+        if (!result.ok) {
+          alert(result.data.message || "Could not update queue status");
+          return;
+        }
+        MANAGED_QUEUES[id] = result.data.queue;
+        s.open = result.data.queue.status === "open";
         render();
       }
       window.go = go;
@@ -322,35 +377,31 @@
       window.editService = editService;
       window.cancelEditService = cancelEditService;
 
-// ---- Queue management actions (UI simulation only) ----
-      function selectQueueService(id) {
+      async function selectQueueService(id) {
         state.queueServiceId = id;
         hideServedBanner();
+        await loadLiveQueue(id);
         render();
       }
       function moveQueueUser(id, dir) {
-        const q = QUEUES[state.queueServiceId];
-        const i = q.findIndex((u) => u.id === id);
-        const j = i + dir;
-        if (i < 0 || j < 0 || j >= q.length) return;
-        [q[i], q[j]] = [q[j], q[i]];
-        hideServedBanner();
-        render();
+        alert("Reordering is UI-only for now. Serve next uses the live backend order (priority + arrival).");
       }
       function removeQueueUser(id) {
-        const q = QUEUES[state.queueServiceId];
-        QUEUES[state.queueServiceId] = q.filter((u) => u.id !== id);
-        syncQueueLengthDisplay();
-        hideServedBanner();
-        render();
+        alert("Remove-from-queue for arbitrary users is not exposed yet. Use Serve next for the front of the line.");
       }
-      function serveNextUser() {
-        const q = QUEUES[state.queueServiceId];
-        if (!q || q.length === 0) return;
-        const served = q.shift();
-        syncQueueLengthDisplay();
+      async function serveNextUser() {
+        const serviceId = state.queueServiceId;
+        if (!serviceId) return;
+        const result = await apiPost("/api/queues/serve-next", { service_id: serviceId });
+        if (!result.ok) {
+          alert(result.data.message || "Could not serve next user");
+          return;
+        }
+        const served = result.data.served || {};
+        await loadLiveQueue(serviceId);
+        await loadServicesFromApi();
         render();
-        showServedBanner(served.name);
+        showServedBanner(served.user_email || served.user_id || "User");
       }
       function syncQueueLengthDisplay() {
         const svc = SERVICES.find((s) => s.id === state.queueServiceId);
@@ -379,6 +430,12 @@
       }
 
       function dashboard() {
+        if (!SERVICES.length) {
+          return `<div class="page">
+            <h1>Admin Dashboard</h1>
+            <p class="sub">No services yet. Create one under Service Management (requires admin login).</p>
+          </div>`;
+        }
         const rows = SERVICES.map((s) => `
           <div class="svc-row">
             <div class="svc-info">
@@ -482,7 +539,7 @@
           el.addEventListener("input", () => clearServiceFieldError(map[id][0], map[id][1]));
         });
 
-        document.getElementById("svc-save").addEventListener("click", () => {
+        document.getElementById("svc-save").addEventListener("click", async () => {
           const values = {
             name: nameInput.value,
             description: document.getElementById("svc-desc").value,
@@ -511,25 +568,41 @@
             return;
           }
 
-          // Valid — add or update the mock list (no backend in Assignment 2)
-          const editing = SERVICES.find((s) => s.id === state.editingServiceId);
-          if (editing) {
-            editing.name = values.name.trim();
-            editing.description = values.description.trim();
-            editing.duration = Number(values.duration);
-            editing.priority = values.priority;
+          const payload = {
+            name: values.name.trim(),
+            description: values.description.trim(),
+            duration: Number(values.duration),
+            priority: values.priority,
+          };
+
+          const saveBtn = document.getElementById("svc-save");
+          saveBtn.disabled = true;
+          saveBtn.textContent = state.editingServiceId ? "Updating…" : "Saving…";
+
+          // Edit uses PUT /api/services/:id — this is the TA-required update path
+          let result;
+          if (state.editingServiceId) {
+            result = await apiPut(`/api/services/${state.editingServiceId}`, payload);
           } else {
-            SERVICES.push({
-              id: "s" + (SERVICES.length + 1),
-              name: values.name.trim(),
-              description: values.description.trim(),
-              duration: Number(values.duration),
-              priority: values.priority,
-              queueLength: 0,
-              open: true,
-            });
+            result = await apiPost("/api/services/", payload);
           }
+
+          saveBtn.disabled = false;
+          saveBtn.textContent = state.editingServiceId ? "Update service" : "Save service";
+
+          if (!result.ok) {
+            const msg = result.data.message || "Save failed";
+            const list = document.getElementById("form-summary-list");
+            const detail = result.data.errors
+              ? Object.values(result.data.errors).map((m) => `<li>${m}</li>`).join("")
+              : `<li>${msg}</li>`;
+            list.innerHTML = detail;
+            document.getElementById("form-summary").classList.add("show");
+            return;
+          }
+
           state.editingServiceId = null;
+          await loadServicesFromApi();
           render();
           document.getElementById("form-success").classList.add("show");
         });
@@ -543,6 +616,9 @@
       }
 
     function queueScreen() {
+        if (!SERVICES.length) {
+          return `<div class="page"><h1>Queue Management</h1><p class="sub">No services yet. Create one under Service Management.</p></div>`;
+        }
         if (!QUEUES[state.queueServiceId]) state.queueServiceId = SERVICES[0].id;
         const q = QUEUES[state.queueServiceId] || [];
         const svcOptions = SERVICES.map(
@@ -567,7 +643,7 @@
 
         return `<div class="page">
           <h1>Queue Management</h1>
-          <p class="sub">View and manage the live queue for a service. Reordering, removing, and serving happen in this UI only — no backend in Assignment 2.</p>
+          <p class="sub">View and manage the live queue for a service. Serve next uses the backend (priority + arrival time).</p>
 
           <div class="served-banner" id="served-banner">${CHECK}<span></span></div>
 
@@ -584,8 +660,15 @@
           <div class="section-label">In queue (${q.length})</div>
           <div class="queue-card">${rows}</div>
         </div>`;
-      }      
-      render();
+      }
+
+      (async function init() {
+        const nameEl = document.getElementById("admin-name");
+        if (nameEl) nameEl.textContent = displayName(adminUser);
+        window.logout = logout;
+        await loadServicesFromApi();
+        render();
+      })();
     </script>
   </body>
 </html>

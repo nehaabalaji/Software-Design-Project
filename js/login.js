@@ -1,4 +1,14 @@
 document.addEventListener('DOMContentLoaded', () => {
+  // Already signed in? Send them to the right dashboard.
+  try {
+    const token = localStorage.getItem('queuesmart_token');
+    const user = JSON.parse(localStorage.getItem('queuesmart_user') || 'null');
+    if (token && user) {
+      window.location.href = user.role === 'Administrator' ? 'admin.html' : 'homescreen.html';
+      return;
+    }
+  } catch (_) {}
+
   const form = document.getElementById('login-form');
   const button = document.getElementById('login-button');
 
@@ -41,7 +51,11 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('queuesmart_token', data.token);
     localStorage.setItem('queuesmart_user', JSON.stringify(data.user));
 
-    window.location.href = 'home.html';
+    if (data.user && data.user.role === 'Administrator') {
+      window.location.href = 'admin.html';
+    } else {
+      window.location.href = 'homescreen.html';
+    }
   });
 
   ['email', 'password'].forEach((name) => {

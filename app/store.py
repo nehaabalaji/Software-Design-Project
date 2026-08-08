@@ -16,8 +16,11 @@ class InMemoryStore:
         self._services = {}
         self._history = {}
         self._queue_entries = {}
+        self._managed_queues = {}  # queue_id -> queue dict
+        self._managed_queues_by_service = {}  # service_id -> queue_id
         self._notifications = {}
         self._profiles = {}
+        self._next_queue_id = 1
 
 
     def create_user(self, *, email, password_hash, role, first_name="", last_name=""):
@@ -160,21 +163,27 @@ class InMemoryStore:
             self._history.clear()
             self._services.clear()
             self._queue_entries.clear()
+            self._managed_queues.clear()
+            self._managed_queues_by_service.clear()
             self._notifications.clear()
             self._profiles.clear()
+            self._next_queue_id = 1
 
     # Services
 
-    def create_service(self, *, name, description, duration, priority):
+    def create_service(self, *, name, description, duration, priority, priority_level=None):
         with self._lock:
             service_id = str(uuid4())
             now = datetime.now(timezone.utc).isoformat()
+            if priority_level is None:
+                priority_level = _PRIORITY_WEIGHT.get(priority, 0)
             service = {
                 "id": service_id,
                 "name": name,
                 "description": description,
                 "duration": duration,
                 "priority": priority,
+                "priority_level": priority_level,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -214,6 +223,9 @@ class InMemoryStore:
                 return False
             del self._services[service_id]
             self._queue_entries.pop(service_id, None)
+            qid = self._managed_queues_by_service.pop(service_id, None)
+            if qid is not None:
+                self._managed_queues.pop(qid, None)
             return True
 
     def get_queue_length(self, service_id):
@@ -221,6 +233,50 @@ class InMemoryStore:
         The Queue module is what actually appends/removes entries here."""
         with self._lock:
             return len(self._queue_entries.get(service_id, []))
+
+    # Managed queues (open / closed)
+
+    def create_managed_queue(self, *, service_id, status="open"):
+        with self._lock:
+            if service_id not in self._services:
+                raise ValueError("Service not found")
+            if service_id in self._managed_queues_by_service:
+                raise ValueError("A queue already exists for this service")
+            queue_id = self._next_queue_id
+            self._next_queue_id += 1
+            queue = {
+                "queue_id": queue_id,
+                "service_id": service_id,
+                "status": status,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._managed_queues[queue_id] = queue
+            self._managed_queues_by_service[service_id] = queue_id
+            return dict(queue)
+
+    def list_managed_queues(self):
+        with self._lock:
+            return [dict(q) for q in sorted(self._managed_queues.values(), key=lambda x: x["queue_id"])]
+
+    def get_managed_queue(self, queue_id):
+        with self._lock:
+            queue = self._managed_queues.get(queue_id)
+            return dict(queue) if queue else None
+
+    def get_queue_for_service(self, service_id):
+        with self._lock:
+            qid = self._managed_queues_by_service.get(service_id)
+            if qid is None:
+                return None
+            return dict(self._managed_queues[qid])
+
+    def update_managed_queue_status(self, queue_id, status):
+        with self._lock:
+            queue = self._managed_queues.get(queue_id)
+            if not queue:
+                return None
+            queue["status"] = status
+            return dict(queue)
 
     # Queue entries
 
@@ -256,7 +312,13 @@ class InMemoryStore:
 
     def list_queue(self, service_id):
         with self._lock:
-            return self._sorted_entries_locked(service_id)
+            results = []
+            for entry in self._sorted_entries_locked(service_id):
+                row = dict(entry)
+                user = self._users.get(entry["user_id"])
+                row["user_email"] = user["email"] if user else None
+                results.append(row)
+            return results
 
     def get_queue_position(self, *, user_id, service_id):
         with self._lock:

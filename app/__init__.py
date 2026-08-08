@@ -1,6 +1,7 @@
-from flask import Flask
+from flask import Flask, abort, send_from_directory
 from flask_cors import CORS
 from flask_migrate import Migrate
+from pathlib import Path
 
 from app import config
 from app.auth import auth_bp
@@ -14,6 +15,7 @@ from app import models  # noqa: F401 -- registers tables with SQLAlchemy for Fla
 from app.profile import profile_bp
 
 migrate = Migrate()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def create_app(store=None):
@@ -50,5 +52,19 @@ def create_app(store=None):
     @app.get("/api/health")
     def health():
         return {"status": "ok", "app": "QueueSmart"}
+
+    # Serve the website (HTML/CSS/JS) from the same server as the API
+    @app.get("/")
+    def site_index():
+        return send_from_directory(PROJECT_ROOT, "index.html")
+
+    @app.get("/<path:filename>")
+    def site_files(filename):
+        if filename.startswith("api/"):
+            abort(404)
+        target = PROJECT_ROOT / filename
+        if target.is_file():
+            return send_from_directory(PROJECT_ROOT, filename)
+        abort(404)
 
     return app
