@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # Notification Module
 #
 # Records in-app notifications for users and lets them read/mark them.
@@ -15,11 +16,30 @@
 #   POST /api/notifications/read-all    mark all of the caller's as read (login required)
 
 from flask import Blueprint, current_app, jsonify, request
+=======
+# Notification Module (Mahmoud Masoud)
+#
+# Notifications are triggered from the Queue module when:
+#   - a user joins a queue ("joined")
+#   - a user is close to being served ("almost_ready"), i.e. within
+#     ALMOST_READY_POSITION spots of the front
+#
+# No real email/SMS -- notifications are stored in the store and exposed
+# as JSON so the frontend can display/poll them.
+#
+# Endpoints:
+#   GET  /api/notifications/            login required
+#   POST /api/notifications/<id>/read   login required
+#   POST /api/notifications/read-all    login required
+
+from flask import Blueprint, current_app, jsonify
+>>>>>>> Stashed changes
 
 from app.utils import login_required
 
 notifications_bp = Blueprint("notifications", __name__)
 
+<<<<<<< Updated upstream
 # How close to the front a user must be before an "almost ready" alert fires.
 ALMOST_READY_POSITION = 3
 
@@ -42,10 +62,27 @@ def notify_joined(store, *, user_id, service_id, position):
         service_id=service_id,
         kind=JOINED,
         message=message,
+=======
+ALMOST_READY_POSITION = 3
+
+
+def is_almost_ready(position):
+    """True once `position` is close enough to the front to alert someone."""
+    return position is not None and position <= ALMOST_READY_POSITION
+
+
+def notify_joined(store, *, user_id, service_id, position):
+    return store.create_notification(
+        user_id=user_id,
+        service_id=service_id,
+        kind="joined",
+        message=f"You joined the queue at position {position}.",
+>>>>>>> Stashed changes
     )
 
 
 def notify_almost_ready(store, *, user_id, service_id, position):
+<<<<<<< Updated upstream
     """Call when a user moves close to the front of the queue."""
     ahead = position - 1
     if ahead <= 0:
@@ -98,10 +135,27 @@ def list_my_notifications(user):
         "count": len(notifications),
         "unread_count": unread_count,
     }), 200
+=======
+    return store.create_notification(
+        user_id=user_id,
+        service_id=service_id,
+        kind="almost_ready",
+        message=f"You're almost up! You're at position {position}.",
+    )
+
+
+@notifications_bp.get("/")
+@login_required
+def my_notifications(user):
+    store = current_app.config["STORE"]
+    notifications = store.list_notifications(user["id"])
+    return jsonify({"notifications": notifications, "count": len(notifications)}), 200
+>>>>>>> Stashed changes
 
 
 @notifications_bp.post("/<notification_id>/read")
 @login_required
+<<<<<<< Updated upstream
 def mark_read(user, notification_id):
     store = current_app.config["STORE"]
 
@@ -110,11 +164,23 @@ def mark_read(user, notification_id):
         return jsonify({"message": "Notification not found"}), 404
 
     return jsonify({"message": "Notification marked as read", "notification": notification}), 200
+=======
+def read_notification(user, notification_id):
+    store = current_app.config["STORE"]
+    notification = store.mark_notification_read(notification_id, user["id"])
+    if not notification:
+        return jsonify({"message": "Notification not found"}), 404
+    return jsonify({"notification": notification}), 200
+>>>>>>> Stashed changes
 
 
 @notifications_bp.post("/read-all")
 @login_required
+<<<<<<< Updated upstream
 def mark_all_read(user):
+=======
+def read_all_notifications(user):
+>>>>>>> Stashed changes
     store = current_app.config["STORE"]
     updated = store.mark_all_notifications_read(user["id"])
     return jsonify({"message": "Notifications marked as read", "updated": updated}), 200

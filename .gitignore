@@ -2,6 +2,9 @@
 .idea
 .vscode
 
+# Local secrets -- never commit real credentials
+.env
+
 # Python / Assignment 3
 .venv/
 __pycache__/

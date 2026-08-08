@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import pytest
 
 from app.notifications import (
@@ -203,3 +204,80 @@ def test_is_almost_ready_rejects_bad_input():
         is_almost_ready("2")
     with pytest.raises(ValueError):
         is_almost_ready(True)
+=======
+from tests.conftest import auth_header, register_and_login
+
+
+def make_service(store, name="Checkup", duration=10, priority="medium"):
+    return store.create_service(
+        name=name, description="desc", duration=duration, priority=priority
+    )
+
+
+def test_notifications_require_login(client, store):
+    resp = client.get("/api/notifications/")
+    assert resp.status_code == 401
+
+
+def test_list_notifications_after_join(client, store):
+    service = make_service(store)
+    token, user = register_and_login(client, "note1@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    resp = client.get("/api/notifications/", headers=auth_header(token))
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["count"] >= 1
+    assert all(n["status"] == "sent" for n in body["notifications"])
+
+
+def test_mark_notification_read(client, store):
+    service = make_service(store)
+    token, user = register_and_login(client, "note2@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    notification_id = store.list_notifications(user["id"])[0]["id"]
+    resp = client.post(f"/api/notifications/{notification_id}/read", headers=auth_header(token))
+    assert resp.status_code == 200
+    assert resp.get_json()["notification"]["status"] == "viewed"
+
+
+def test_mark_notification_read_requires_login(client, store):
+    resp = client.post("/api/notifications/some-id/read")
+    assert resp.status_code == 401
+
+
+def test_mark_notification_read_not_found(client, store):
+    token, _ = register_and_login(client, "note3@example.com")
+    resp = client.post("/api/notifications/does-not-exist/read", headers=auth_header(token))
+    assert resp.status_code == 404
+
+
+def test_cannot_mark_another_users_notification_read(client, store):
+    service = make_service(store)
+    token1, user1 = register_and_login(client, "note4@example.com")
+    token2, _ = register_and_login(client, "note5@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token1))
+
+    notification_id = store.list_notifications(user1["id"])[0]["id"]
+    resp = client.post(f"/api/notifications/{notification_id}/read", headers=auth_header(token2))
+    assert resp.status_code == 404
+
+
+def test_mark_all_notifications_read(client, store):
+    service = make_service(store)
+    token, user = register_and_login(client, "note6@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    resp = client.post("/api/notifications/read-all", headers=auth_header(token))
+    assert resp.status_code == 200
+    assert resp.get_json()["updated"] >= 1
+
+    notifications = store.list_notifications(user["id"])
+    assert all(n["status"] == "viewed" for n in notifications)
+
+
+def test_mark_all_notifications_read_requires_login(client, store):
+    resp = client.post("/api/notifications/read-all")
+    assert resp.status_code == 401
+>>>>>>> Stashed changes

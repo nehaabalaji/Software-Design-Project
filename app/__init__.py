@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app import config
 from app.auth import auth_bp
+<<<<<<< Updated upstream
 from app.extensions import db
 from app.history import history_bp
 from app.queues import queues_bp
@@ -16,6 +17,16 @@ from app.profile import profile_bp
 
 migrate = Migrate()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+=======
+from app.notifications import notifications_bp
+from app.queues import queues_bp
+from app.store import InMemoryStore
+
+# Other modules (services, history) are for the rest of the team. When
+# ready, import their blueprints and register them below. Example:
+#   from app.services import services_bp
+#   app.register_blueprint(services_bp, url_prefix="/api/services")
+>>>>>>> Stashed changes
 
 
 def create_app(store=None):
@@ -34,6 +45,7 @@ def create_app(store=None):
     # Authentication Module (done)
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
 
+<<<<<<< Updated upstream
     # Service Management Module (done)
     app.register_blueprint(services_bp, url_prefix="/api/services")
 
@@ -49,6 +61,12 @@ def create_app(store=None):
     # UserProfile Module (A4)
     app.register_blueprint(profile_bp, url_prefix="/api/profile")
 
+=======
+    # Queue Management + Notifications Modules (done)
+    app.register_blueprint(queues_bp, url_prefix="/api/queues")
+    app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
+
+>>>>>>> Stashed changes
     @app.get("/api/health")
     def health():
         return {"status": "ok", "app": "QueueSmart"}

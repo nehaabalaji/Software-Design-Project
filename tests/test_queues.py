@@ -175,3 +175,120 @@ def test_serve_next_on_empty_queue(client, store):
         "/api/queues/serve-next", json={"service_id": service["id"]}, headers=auth_header(admin_token)
     )
     assert resp.status_code == 404
+<<<<<<< Updated upstream
+=======
+
+
+def test_leave_queue_marks_status_canceled_not_deleted(client, store):
+    # /mine and the store's public API only ever expose "waiting" entries,
+    # so this checks the underlying record directly rather than the route.
+    service = make_service(store)
+    token, user = register_and_login(client, "l1@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+    client.post("/api/queues/leave", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    all_entries = store._queue_entries[service["id"]]
+    assert len(all_entries) == 1
+    assert all_entries[0]["status"] == "canceled"
+    assert all_entries[0]["position"] is None
+
+
+def test_user_can_rejoin_after_leaving(client, store):
+    service = make_service(store)
+    token, _ = register_and_login(client, "l2@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+    client.post("/api/queues/leave", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    resp = client.post(
+        "/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token)
+    )
+    assert resp.status_code == 201
+    assert resp.get_json()["entry"]["status"] == "waiting"
+    assert resp.get_json()["entry"]["position"] == 1
+
+
+def test_positions_shift_down_after_someone_leaves(client, store):
+    service = make_service(store, duration=5)
+    token1, _ = register_and_login(client, "m1@example.com")
+    token2, _ = register_and_login(client, "m2@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token1))
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token2))
+
+    client.post("/api/queues/leave", json={"service_id": service["id"]}, headers=auth_header(token1))
+
+    resp = client.get("/api/queues/mine", headers=auth_header(token2))
+    assert resp.get_json()["queue_entries"][0]["position"] == 1
+
+
+def test_served_entry_is_excluded_from_queue_length(client, store):
+    # get_queue_length backs the "block delete while queue non-empty" rule
+    # in services.py; a served entry must not keep counting against it.
+    service = make_service(store)
+    admin_token, _ = register_and_login(client, "admin4@example.com", role=ADMINISTRATOR)
+    token, _ = register_and_login(client, "m3@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+    client.post(
+        "/api/queues/serve-next", json={"service_id": service["id"]}, headers=auth_header(admin_token)
+    )
+    assert store.get_queue_length(service["id"]) == 0
+
+
+def test_join_triggers_notify_joined(client, store):
+    service = make_service(store)
+    token, user = register_and_login(client, "n1@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    notifications = store.list_notifications(user["id"])
+    kinds = {n["kind"] for n in notifications}
+    assert "joined" in kinds
+
+
+def test_join_at_front_also_triggers_almost_ready(client, store):
+    # position 1 is within ALMOST_READY_POSITION, so joining an empty
+    # queue should fire both the "joined" and "almost_ready" alerts.
+    service = make_service(store)
+    token, user = register_and_login(client, "n2@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token))
+
+    kinds = {n["kind"] for n in store.list_notifications(user["id"])}
+    assert kinds == {"joined", "almost_ready"}
+
+
+def test_leaving_notifies_person_now_moved_up(client, store):
+    service = make_service(store)
+    token1, user1 = register_and_login(client, "n3@example.com")
+    token2, user2 = register_and_login(client, "n4@example.com")
+    token3, user3 = register_and_login(client, "n5@example.com")
+    token4, user4 = register_and_login(client, "n6@example.com")
+
+    for t in (token1, token2, token3, token4):
+        client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(t))
+
+    # user4 joined 4th (position 4), outside ALMOST_READY_POSITION=3, so no
+    # almost_ready alert yet.
+    assert "almost_ready" not in {n["kind"] for n in store.list_notifications(user4["id"])}
+
+    # user1 leaves -> user4 moves from position 4 to position 3.
+    client.post("/api/queues/leave", json={"service_id": service["id"]}, headers=auth_header(token1))
+
+    assert "almost_ready" in {n["kind"] for n in store.list_notifications(user4["id"])}
+
+
+def test_serve_next_notifies_new_front_of_line(client, store):
+    service = make_service(store)
+    admin_token, _ = register_and_login(client, "admin5@example.com", role=ADMINISTRATOR)
+    token1, user1 = register_and_login(client, "n7@example.com")
+    token2, user2 = register_and_login(client, "n8@example.com")
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token1))
+    client.post("/api/queues/join", json={"service_id": service["id"]}, headers=auth_header(token2))
+
+    client.post(
+        "/api/queues/serve-next", json={"service_id": service["id"]}, headers=auth_header(admin_token)
+    )
+
+    # user2 was already within ALMOST_READY_POSITION at position 2, so this
+    # mainly confirms serve-next doesn't skip the recheck; more importantly,
+    # they should now have received at least one almost_ready alert.
+    kinds = {n["kind"] for n in store.list_notifications(user2["id"])}
+    assert "almost_ready" in kinds
+>>>>>>> Stashed changes
