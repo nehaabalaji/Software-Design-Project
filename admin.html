@@ -259,7 +259,7 @@
         </div>
         <nav class="nav" id="nav"></nav>
         <div class="side-foot">
-          <div class="avatar">AD</div>
+          <div class="avatar" id="admin-avatar">AD</div>
           <div>
             <div class="avatar-name" id="admin-name">Admin</div>
             <div class="avatar-sub">Administrator</div>
@@ -296,6 +296,31 @@
       let QUEUES = {};
       let MANAGED_QUEUES = {}; // service_id -> { queue_id, status }
       let STATS = null; // /api/history/stats response
+      let PROFILE = null; // /api/profile/me response, or null if not created yet
+
+      function currentDisplayName() {
+        if (PROFILE && PROFILE.full_name) return PROFILE.full_name;
+        return displayName(adminUser);
+      }
+
+      function initialsFor(name) {
+        const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return "?";
+        return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+      }
+
+      function renderIdentity() {
+        const name = currentDisplayName();
+        const nameEl = document.getElementById("admin-name");
+        const avatarEl = document.getElementById("admin-avatar");
+        if (nameEl) nameEl.textContent = name;
+        if (avatarEl) avatarEl.textContent = initialsFor(name);
+      }
+
+      async function loadProfile() {
+        const result = await apiGet("/api/profile/me");
+        PROFILE = result.ok ? result.data.profile : null;
+      }
 
       function mapApiService(s) {
         return {
@@ -393,6 +418,8 @@
           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>' },
         { id: "reports", label: "Reports",
           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>' },
+        { id: "profile", label: "Profile",
+          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
       ];
 
       const CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
@@ -790,9 +817,68 @@
         </div>`;
       }
 
+      function profileScreen() {
+        const p = PROFILE || {};
+        return `<div class="page">
+          <h1>Profile</h1>
+          <p class="sub">This name is shown across QueueSmart instead of your email.</p>
+          <div class="form-card">
+            <div class="field">
+              <label for="profile-name">Full name</label>
+              <input id="profile-name" type="text" maxlength="200" value="${(p.full_name || "").replace(/"/g, "&quot;")}" placeholder="e.g. Vasavi Chenna" />
+            </div>
+            <div class="field">
+              <label for="profile-phone">Phone <span class="hint">(optional)</span></label>
+              <input id="profile-phone" type="text" maxlength="30" value="${(p.phone || "").replace(/"/g, "&quot;")}" placeholder="e.g. 555-0100" />
+            </div>
+            <div class="field-error" id="profile-error"></div>
+            <button class="primary" id="profile-save" onclick="saveProfile()">${PROFILE ? "Save changes" : "Create profile"}</button>
+          </div>
+        </div>`;
+      }
+
+      async function saveProfile() {
+        const fullName = document.getElementById("profile-name").value.trim();
+        const phone = document.getElementById("profile-phone").value.trim();
+        const errorEl = document.getElementById("profile-error");
+        const btn = document.getElementById("profile-save");
+        errorEl.textContent = "";
+
+        if (!fullName) {
+          errorEl.textContent = "Full name is required.";
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+
+        const payload = { full_name: fullName, phone };
+        const result = PROFILE
+          ? await apiPut("/api/profile/me", payload)
+          : await apiPost("/api/profile/me", payload);
+
+        btn.disabled = false;
+        btn.textContent = PROFILE ? "Save changes" : "Create profile";
+
+        if (!result.ok) {
+          const errs = result.data.errors || {};
+          errorEl.textContent = errs.full_name || errs.phone || result.data.message || "Could not save profile";
+          return;
+        }
+
+        PROFILE = result.data.profile;
+        renderIdentity();
+        render();
+      }
+      window.saveProfile = saveProfile;
+
       function render() {
         renderNav();
-        const views = { dashboard, service: serviceScreen, queue: queueScreen, reports: reportsScreen };
+        renderIdentity();
+        const views = {
+          dashboard, service: serviceScreen, queue: queueScreen,
+          reports: reportsScreen, profile: profileScreen,
+        };
         document.getElementById("main").innerHTML = views[state.tab]();
         if (state.tab === "service") wireServiceForm();
       }
@@ -845,10 +931,8 @@
       }
 
       (async function init() {
-        const nameEl = document.getElementById("admin-name");
-        if (nameEl) nameEl.textContent = displayName(adminUser);
         window.logout = logout;
-        await loadServicesFromApi();
+        await Promise.all([loadServicesFromApi(), loadProfile()]);
         render();
       })();
     </script>
