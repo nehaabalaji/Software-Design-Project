@@ -39,3 +39,28 @@ async function apiPut(path, body) {
 async function apiDelete(path) {
   return apiRequest('DELETE', path);
 }
+
+// Downloads use a plain authenticated fetch (not JSON) so the browser never
+// sees the token in the URL, then saves the response as a file via a
+// throwaway <a download> link.
+async function apiDownload(path, filename) {
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: authHeaders() });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { ok: false, status: response.status, data };
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return { ok: true, status: response.status };
+  } catch (err) {
+    return { ok: false, status: 0, data: { message: 'Could not reach the server.' } };
+  }
+}

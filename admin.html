@@ -227,6 +227,18 @@
         font-weight: 700; background: #f0fdfa; color: #0f766e;
         padding: 3px 10px; border-radius: 20px; font-size: 12.5px;
       }
+      .report-filters {
+        display: flex; gap: 14px; align-items: flex-end; margin-bottom: 22px; flex-wrap: wrap;
+      }
+      .report-filters .field { margin-bottom: 0; min-width: 160px; }
+      .table-wrap { overflow-x: auto; padding: 4px; }
+      .report-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+      .report-table th {
+        text-align: left; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #94a3b8; padding: 10px 14px; border-bottom: 1px solid #eef2f6;
+      }
+      .report-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; }
+      .report-table tr:last-child td { border-bottom: none; }
 
       @media (max-width: 720px) {
         .sidebar { display: none; }
@@ -320,12 +332,39 @@
         await loadLiveQueue(state.queueServiceId);
       }
 
+      function reportQueryString() {
+        const params = new URLSearchParams();
+        const f = state.reportFilters;
+        if (f.start_date) params.set("start_date", f.start_date);
+        if (f.end_date) params.set("end_date", f.end_date);
+        if (f.service_id) params.set("service_id", f.service_id);
+        const qs = params.toString();
+        return qs ? `?${qs}` : "";
+      }
+
       async function loadReportsFromApi() {
-        const result = await apiGet("/api/history/stats");
+        const result = await apiGet(`/api/history/report${reportQueryString()}`);
         STATS = result.ok
           ? result.data
-          : { total_entries: 0, by_action: {}, by_service: {}, average_wait_time_minutes: null };
+          : { summary: { total_entries: 0, by_action: {}, average_wait_time_minutes: null }, services: [], users: [] };
       }
+
+      async function applyReportFilters() {
+        state.reportFilters.start_date = document.getElementById("rpt-start").value;
+        state.reportFilters.end_date = document.getElementById("rpt-end").value;
+        state.reportFilters.service_id = document.getElementById("rpt-service").value;
+        await loadReportsFromApi();
+        render();
+      }
+      window.applyReportFilters = applyReportFilters;
+
+      async function exportReportCsv() {
+        const result = await apiDownload(`/api/history/report.csv${reportQueryString()}`, "queuesmart_history.csv");
+        if (!result.ok) {
+          alert((result.data && result.data.message) || "Could not export CSV");
+        }
+      }
+      window.exportReportCsv = exportReportCsv;
 
       async function loadLiveQueue(serviceId) {
         if (!serviceId) return;
@@ -364,7 +403,12 @@
       const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       const FORWARD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 4 15 12 5 20"/><line x1="19" y1="5" x2="19" y2="19"/></svg>';
 
-      let state = { tab: "dashboard", queueServiceId: null, editingServiceId: null };
+      let state = {
+        tab: "dashboard",
+        queueServiceId: null,
+        editingServiceId: null,
+        reportFilters: { start_date: "", end_date: "", service_id: "" },
+      };
 
       async function go(tab) {
         state.tab = tab;
@@ -649,32 +693,75 @@
           return `<div class="page"><h1>Reports</h1><p class="sub">Loading usage statistics…</p></div>`;
         }
 
+        const f = state.reportFilters;
+        const svcOptions = `<option value="">All services</option>` + SERVICES.map(
+          (s) => `<option value="${s.id}" ${f.service_id === s.id ? "selected" : ""}>${s.name}</option>`
+        ).join("");
+
+        const summary = STATS.summary || { total_entries: 0, by_action: {}, average_wait_time_minutes: null };
+        const avgWait = summary.average_wait_time_minutes;
+
         const statRow = (label, count) => `
           <div class="stat-row">
             <span class="stat-row-label">${label}</span>
             <span class="stat-row-value">${count}</span>
           </div>`;
 
-        const byAction = Object.entries(STATS.by_action).sort((a, b) => b[1] - a[1]);
-        const byService = Object.entries(STATS.by_service).sort((a, b) => b[1] - a[1]);
-
+        const byAction = Object.entries(summary.by_action || {}).sort((a, b) => b[1] - a[1]);
         const actionRows = byAction.length
           ? byAction.map(([action, count]) => statRow(action.replace("_", " "), count)).join("")
-          : `<div class="queue-empty">No queue history yet.</div>`;
-        const serviceRows = byService.length
-          ? byService.map(([name, count]) => statRow(name, count)).join("")
-          : `<div class="queue-empty">No queue history yet.</div>`;
+          : `<div class="queue-empty">No queue history in this range.</div>`;
 
-        const avgWait = STATS.average_wait_time_minutes;
+        const services = STATS.services || [];
+        const serviceRows = services.length
+          ? services.map((s) => `
+              <tr>
+                <td>${s.service_name}</td>
+                <td>${s.total_entries}</td>
+                <td>${(s.by_action && s.by_action.joined) || 0}</td>
+                <td>${(s.by_action && s.by_action.served) || 0}</td>
+                <td>${(s.by_action && s.by_action.left) || 0}</td>
+                <td>${s.average_wait_time_minutes != null ? s.average_wait_time_minutes + " min" : "—"}</td>
+              </tr>`).join("")
+          : `<tr><td colspan="6" class="queue-empty">No service activity in this range.</td></tr>`;
+
+        const users = STATS.users || [];
+        const userRows = users.length
+          ? users.map((u) => `
+              <tr>
+                <td>${u.email || u.user_id}</td>
+                <td>${u.total_entries}</td>
+                <td>${(u.by_action && u.by_action.joined) || 0}</td>
+                <td>${(u.by_action && u.by_action.served) || 0}</td>
+                <td>${(u.by_action && u.by_action.left) || 0}</td>
+              </tr>`).join("")
+          : `<tr><td colspan="5" class="queue-empty">No user activity in this range.</td></tr>`;
 
         return `<div class="page">
           <h1>Reports</h1>
-          <p class="sub">Usage statistics aggregated from queue history across all services.</p>
+          <p class="sub">Usage statistics, service activity, and user participation history. Filter by date range or service, then export.</p>
+
+          <div class="report-filters">
+            <div class="field">
+              <label for="rpt-start">From</label>
+              <input type="date" id="rpt-start" value="${f.start_date || ""}" />
+            </div>
+            <div class="field">
+              <label for="rpt-end">To</label>
+              <input type="date" id="rpt-end" value="${f.end_date || ""}" />
+            </div>
+            <div class="field">
+              <label for="rpt-service">Service</label>
+              <select id="rpt-service">${svcOptions}</select>
+            </div>
+            <button class="toggle-btn" type="button" onclick="applyReportFilters()">Apply filters</button>
+            <button class="serve-btn" type="button" onclick="exportReportCsv()">Export CSV</button>
+          </div>
 
           <div class="stat-cards">
             <div class="stat-card">
               <div class="stat-card-label">Total history entries</div>
-              <div class="stat-card-value">${STATS.total_entries}</div>
+              <div class="stat-card-value">${summary.total_entries}</div>
             </div>
             <div class="stat-card">
               <div class="stat-card-label">Average wait time</div>
@@ -685,8 +772,21 @@
           <div class="section-label">By action</div>
           <div class="queue-card"><div class="stat-list">${actionRows}</div></div>
 
-          <div class="section-label">By service</div>
-          <div class="queue-card"><div class="stat-list">${serviceRows}</div></div>
+          <div class="section-label">Service activity</div>
+          <div class="queue-card table-wrap">
+            <table class="report-table">
+              <thead><tr><th>Service</th><th>Total</th><th>Joined</th><th>Served</th><th>Left</th><th>Avg wait</th></tr></thead>
+              <tbody>${serviceRows}</tbody>
+            </table>
+          </div>
+
+          <div class="section-label">User participation history</div>
+          <div class="queue-card table-wrap">
+            <table class="report-table">
+              <thead><tr><th>User</th><th>Total</th><th>Joined</th><th>Served</th><th>Left</th></tr></thead>
+              <tbody>${userRows}</tbody>
+            </table>
+          </div>
         </div>`;
       }
 
