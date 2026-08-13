@@ -215,7 +215,7 @@ class SQLStore:
         return True
 
     def get_queue_length(self, service_id):
-        return QueueEntry.query.filter_by(service_id=service_id).count()
+        return QueueEntry.query.filter_by(service_id=service_id, status="waiting").count()
 
     # ------------------------------------------------------------------
     # Managed queues (open / closed) — assignment Queue table
@@ -263,25 +263,28 @@ class SQLStore:
         if not service:
             raise ValueError("Service not found")
 
-        if QueueEntry.query.filter_by(user_id=user_id, service_id=service_id).first():
+        if QueueEntry.query.filter_by(user_id=user_id, service_id=service_id, status="waiting").first():
             raise ValueError("Already in this queue")
 
         entry = QueueEntry(
             id=str(uuid4()), user_id=user_id, service_id=service_id, priority=service.priority,
+            status="waiting",
         )
         db.session.add(entry)
-        db.session.commit()
+        db.session.flush()
         position = self._position(service_id, entry.id)
+        entry.position = position
+        db.session.commit()
         return self._queue_entry_dict(entry), position
 
     def leave_queue(self, *, user_id, service_id):
-        entry = QueueEntry.query.filter_by(user_id=user_id, service_id=service_id).first()
+        entry = QueueEntry.query.filter_by(user_id=user_id, service_id=service_id, status="waiting").first()
         if not entry:
             return None
-        entry_dict = self._queue_entry_dict(entry)
-        db.session.delete(entry)
+        entry.status = "canceled"
+        entry.position = None
         db.session.commit()
-        return entry_dict
+        return self._queue_entry_dict(entry)
 
     def list_queue(self, service_id):
         results = []
@@ -301,7 +304,7 @@ class SQLStore:
         return None, None
 
     def list_queue_entries_for_user(self, user_id):
-        entries = QueueEntry.query.filter_by(user_id=user_id).all()
+        entries = QueueEntry.query.filter_by(user_id=user_id, status="waiting").all()
         results = []
         for entry in entries:
             service = db.session.get(Service, entry.service_id)
@@ -321,14 +324,14 @@ class SQLStore:
         if not ordered:
             return None
         entry = ordered[0]
-        entry_dict = self._queue_entry_dict(entry)
-        entry_dict["status"] = "served"
-        db.session.delete(entry)
+        entry.status = "served"
+        entry.position = None
+        entry.served_at = datetime.now(timezone.utc)
         db.session.commit()
-        return entry_dict
+        return self._queue_entry_dict(entry)
 
     def _sorted_entries(self, service_id):
-        entries = QueueEntry.query.filter_by(service_id=service_id).all()
+        entries = QueueEntry.query.filter_by(service_id=service_id, status="waiting").all()
         return sorted(
             entries,
             key=lambda e: (-_PRIORITY_WEIGHT.get(e.priority, 0), e.joined_at),
@@ -420,8 +423,10 @@ class SQLStore:
             "user_id": entry.user_id,
             "service_id": entry.service_id,
             "priority": entry.priority,
-            "status": "waiting",
+            "status": entry.status,
+            "position": entry.position,
             "joined_at": _iso(entry.joined_at),
+            "served_at": _iso(entry.served_at),
         }
 
     @staticmethod

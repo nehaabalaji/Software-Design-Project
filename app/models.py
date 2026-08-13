@@ -89,13 +89,28 @@ class Queue(db.Model):
 
 
 class QueueEntry(db.Model):
+    """Person waiting in a service's queue.
+
+    Assignment columns: Queue ID (service_id -- each service has exactly one
+    managed Queue), User ID, Position, Join time, Status.
+    Entries are kept (not deleted) after leaving/being served so the row
+    itself carries a status history, not just the separate HistoryEntry log.
+    """
+
     __tablename__ = "queue_entries"
 
     id = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey("UserCredentials.id"), nullable=False, index=True)
     service_id = db.Column(db.String(36), db.ForeignKey("services.id"), nullable=False, index=True)
     priority = db.Column(db.String(20), nullable=False)
+    status = db.Column(
+        db.Enum("waiting", "served", "canceled", name="queue_entry_status"),
+        nullable=False,
+        default="waiting",
+    )
+    position = db.Column(db.Integer, nullable=True)
     joined_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    served_at = db.Column(db.DateTime, nullable=True)
 
 
 class HistoryEntry(db.Model):
