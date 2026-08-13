@@ -16,15 +16,11 @@ class InMemoryStore:
         self._services = {}
         self._history = {}
         self._queue_entries = {}
-<<<<<<< Updated upstream
         self._managed_queues = {}  # queue_id -> queue dict
         self._managed_queues_by_service = {}  # service_id -> queue_id
         self._notifications = {}
         self._profiles = {}
         self._next_queue_id = 1
-=======
-        self._notifications = {}
->>>>>>> Stashed changes
 
 
     def create_user(self, *, email, password_hash, role, first_name="", last_name=""):
@@ -132,10 +128,9 @@ class InMemoryStore:
 
     def list_notifications(self, user_id):
         with self._lock:
-            return [
-                dict(n) for n in self._notifications.values()
-                if n["user_id"] == user_id
-            ]
+            entries = [n for n in self._notifications.values() if n["user_id"] == user_id]
+            entries.sort(key=lambda n: n["timestamp"])
+            return [dict(n) for n in entries]
 
     def get_notification(self, notification_id):
         with self._lock:
@@ -167,15 +162,11 @@ class InMemoryStore:
             self._history.clear()
             self._services.clear()
             self._queue_entries.clear()
-<<<<<<< Updated upstream
             self._managed_queues.clear()
             self._managed_queues_by_service.clear()
             self._notifications.clear()
             self._profiles.clear()
             self._next_queue_id = 1
-=======
-            self._notifications.clear()
->>>>>>> Stashed changes
 
     # Services
 
@@ -245,93 +236,6 @@ class InMemoryStore:
                 1 for e in self._queue_entries.get(service_id, []) if e["status"] == "waiting"
             )
 
-    # ------------------------------------------------------------------
-    # Queue entries (Queue Management Module)
-    # ------------------------------------------------------------------
-
-    def join_queue(self, *, user_id, service_id):
-        """Add `user_id` to the back of `service_id`'s queue.
-
-        Raises ValueError if the user already has a "waiting" entry for
-        this service. Returns (entry, position) where position is the
-        1-indexed spot among currently-waiting entries.
-        """
-        with self._lock:
-            entries = self._queue_entries.setdefault(service_id, [])
-            if any(e["user_id"] == user_id and e["status"] == "waiting" for e in entries):
-                raise ValueError("You are already in this queue")
-
-            entry_id = str(uuid4())
-            entry = {
-                "id": entry_id,
-                "user_id": user_id,
-                "service_id": service_id,
-                "status": "waiting",
-                "join_time": datetime.now(timezone.utc).isoformat(),
-                "served_time": None,
-                "position": None,
-            }
-            entries.append(entry)
-            position = sum(1 for e in entries if e["status"] == "waiting")
-            entry["position"] = position
-            return dict(entry), position
-
-    def leave_queue(self, *, user_id, service_id):
-        """Cancel `user_id`'s waiting entry in `service_id`'s queue.
-
-        The entry is kept (status flips to "canceled") rather than
-        deleted, so history/analytics can still see it. Returns the
-        updated entry, or None if the user wasn't waiting in this queue.
-        """
-        with self._lock:
-            for entry in self._queue_entries.get(service_id, []):
-                if entry["user_id"] == user_id and entry["status"] == "waiting":
-                    entry["status"] = "canceled"
-                    entry["position"] = None
-                    return dict(entry)
-            return None
-
-    def serve_next(self, service_id):
-        """Mark the person at the front of `service_id`'s queue as served.
-
-        Returns the served entry, or None if nobody is waiting.
-        """
-        with self._lock:
-            for entry in self._queue_entries.get(service_id, []):
-                if entry["status"] == "waiting":
-                    entry["status"] = "served"
-                    entry["position"] = None
-                    entry["served_time"] = datetime.now(timezone.utc).isoformat()
-                    return dict(entry)
-            return None
-
-    def list_queue(self, service_id):
-        """All entries still waiting in `service_id`'s queue, in arrival
-        order, each carrying its live (recomputed) position."""
-        with self._lock:
-            waiting = [e for e in self._queue_entries.get(service_id, []) if e["status"] == "waiting"]
-            results = []
-            for position, entry in enumerate(waiting, start=1):
-                found = dict(entry)
-                found["position"] = position
-                results.append(found)
-            return results
-
-    def list_queue_entries_for_user(self, user_id):
-        """Every queue `user_id` is currently waiting in, each with its
-        live position (recomputed here so it stays correct as other
-        people join/leave/get served ahead of them)."""
-        with self._lock:
-            results = []
-            for entries in self._queue_entries.values():
-                waiting = [e for e in entries if e["status"] == "waiting"]
-                for position, entry in enumerate(waiting, start=1):
-                    if entry["user_id"] == user_id:
-                        found = dict(entry)
-                        found["position"] = position
-                        results.append(found)
-            return results
-
     # Managed queues (open / closed)
 
     def create_managed_queue(self, *, service_id, status="open"):
@@ -376,7 +280,15 @@ class InMemoryStore:
             queue["status"] = status
             return dict(queue)
 
-    # Queue entries
+    # ------------------------------------------------------------------
+    # Queue entries (Queue Management Module)
+    # ------------------------------------------------------------------
+    #
+    # Entries are kept around after leaving/being served (status flips to
+    # "canceled"/"served") rather than deleted, so history/analytics can
+    # still see them. "position" is only ever meaningful for "waiting"
+    # entries and is recomputed on every read, never trusted from storage
+    # except immediately after join/leave/serve for convenience.
 
     def join_queue(self, *, user_id, service_id):
         with self._lock:
@@ -394,25 +306,46 @@ class InMemoryStore:
                 "service_id": service_id,
                 "priority": service["priority"],
                 "status": "waiting",
+                "position": None,
                 "joined_at": datetime.now(timezone.utc).isoformat(),
+                "served_at": None,
             }
             entries.append(entry)
             position = self._position_locked(service_id, entry["id"])
+            entry["position"] = position
             return dict(entry), position
 
     def leave_queue(self, *, user_id, service_id):
         with self._lock:
-            entries = self._queue_entries.get(service_id, [])
-            for i, entry in enumerate(entries):
+            for entry in self._queue_entries.get(service_id, []):
                 if entry["user_id"] == user_id and entry["status"] == "waiting":
-                    return entries.pop(i)
+                    entry["status"] = "canceled"
+                    entry["position"] = None
+                    return dict(entry)
+            return None
+
+    def serve_next(self, service_id):
+        with self._lock:
+            ordered = self._sorted_entries_locked(service_id)
+            if not ordered:
+                return None
+            entry_id = ordered[0]["id"]
+            for entry in self._queue_entries[service_id]:
+                if entry["id"] == entry_id:
+                    entry["status"] = "served"
+                    entry["position"] = None
+                    entry["served_at"] = datetime.now(timezone.utc).isoformat()
+                    return dict(entry)
             return None
 
     def list_queue(self, service_id):
+        """All entries still waiting in `service_id`'s queue, in priority
+        + arrival order, each carrying its live (recomputed) position."""
         with self._lock:
             results = []
-            for entry in self._sorted_entries_locked(service_id):
+            for i, entry in enumerate(self._sorted_entries_locked(service_id), start=1):
                 row = dict(entry)
+                row["position"] = i
                 user = self._users.get(entry["user_id"])
                 row["user_email"] = user["email"] if user else None
                 results.append(row)
@@ -421,43 +354,34 @@ class InMemoryStore:
     def get_queue_position(self, *, user_id, service_id):
         with self._lock:
             entries = self._sorted_entries_locked(service_id)
-            for i, entry in enumerate(entries):
+            for i, entry in enumerate(entries, start=1):
                 if entry["user_id"] == user_id:
-                    return i + 1, entry
+                    return i, entry
             return None, None
 
     def list_queue_entries_for_user(self, user_id):
+        """Every queue `user_id` is currently waiting in, each with its
+        live position (recomputed here so it stays correct as other
+        people join/leave/get served ahead of them)."""
         with self._lock:
             results = []
             for service_id in self._queue_entries:
                 service = self._services.get(service_id)
                 duration = service["duration"] if service else 0
                 ordered = self._sorted_entries_locked(service_id)
-                for i, entry in enumerate(ordered):
-                    if entry["user_id"] == user_id and entry["status"] == "waiting":
-                        entry["service_name"] = service["name"] if service else None
-                        entry["position"] = i + 1
-                        entry["estimated_wait_minutes"] = (i + 1) * duration
-                        results.append(entry)
+                for i, entry in enumerate(ordered, start=1):
+                    if entry["user_id"] == user_id:
+                        found = dict(entry)
+                        found["service_name"] = service["name"] if service else None
+                        found["position"] = i
+                        found["estimated_wait_minutes"] = i * duration
+                        results.append(found)
             return results
 
-    def serve_next(self, service_id):
-        with self._lock:
-            entries = self._queue_entries.get(service_id)
-            if not entries:
-                return None
-            ordered = sorted(
-                entries,
-                key=lambda e: (-_PRIORITY_WEIGHT.get(e["priority"], 0), e["joined_at"]),
-            )
-            next_entry = ordered[0]
-            entries.remove(next_entry)
-            next_entry["status"] = "served"
-            return dict(next_entry)
-
     def _sorted_entries_locked(self, service_id):
-        """Caller must already hold self._lock."""
-        entries = self._queue_entries.get(service_id, [])
+        """Caller must already hold self._lock. Waiting entries only,
+        ordered by priority weight then arrival time."""
+        entries = [e for e in self._queue_entries.get(service_id, []) if e["status"] == "waiting"]
         ordered = sorted(
             entries,
             key=lambda e: (-_PRIORITY_WEIGHT.get(e["priority"], 0), e["joined_at"]),
@@ -466,9 +390,9 @@ class InMemoryStore:
 
     def _position_locked(self, service_id, entry_id):
         """Caller must already hold self._lock."""
-        for i, entry in enumerate(self._sorted_entries_locked(service_id)):
+        for i, entry in enumerate(self._sorted_entries_locked(service_id), start=1):
             if entry["id"] == entry_id:
-                return i + 1
+                return i
         return None
 
     # History
@@ -498,48 +422,6 @@ class InMemoryStore:
         with self._lock:
             return [dict(e) for e in self._history.values()]
 
-    # ------------------------------------------------------------------
-    # Notifications (Notification Module)
-    # ------------------------------------------------------------------
-
-    def create_notification(self, *, user_id, kind, message, service_id=None):
-        with self._lock:
-            notification_id = str(uuid4())
-            notification = {
-                "id": notification_id,
-                "user_id": user_id,
-                "service_id": service_id,
-                "kind": kind,
-                "message": message,
-                "status": "sent",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            self._notifications[notification_id] = notification
-            return dict(notification)
-
-    def list_notifications(self, user_id):
-        with self._lock:
-            entries = [n for n in self._notifications.values() if n["user_id"] == user_id]
-            entries.sort(key=lambda n: n["timestamp"])
-            return [dict(n) for n in entries]
-
-    def mark_notification_read(self, notification_id, user_id):
-        with self._lock:
-            notification = self._notifications.get(notification_id)
-            if not notification or notification["user_id"] != user_id:
-                return None
-            notification["status"] = "viewed"
-            return dict(notification)
-
-    def mark_all_notifications_read(self, user_id):
-        with self._lock:
-            updated = 0
-            for notification in self._notifications.values():
-                if notification["user_id"] == user_id and notification["status"] != "viewed":
-                    notification["status"] = "viewed"
-                    updated += 1
-            return updated
-
 
     @staticmethod
     def _public_user(user):
@@ -550,5 +432,3 @@ class InMemoryStore:
             "first_name": user.get("first_name", ""),
             "last_name": user.get("last_name", ""),
         }
-
-    

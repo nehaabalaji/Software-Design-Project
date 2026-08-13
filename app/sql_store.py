@@ -285,8 +285,9 @@ class SQLStore:
 
     def list_queue(self, service_id):
         results = []
-        for e in self._sorted_entries(service_id):
+        for i, e in enumerate(self._sorted_entries(service_id), start=1):
             entry = self._queue_entry_dict(e)
+            entry["position"] = i
             user = db.session.get(User, e.user_id)
             entry["user_email"] = user.email if user else None
             results.append(entry)

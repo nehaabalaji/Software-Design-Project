@@ -1,41 +1,25 @@
-<<<<<<< Updated upstream
 # Queue Management Module
 #
 # Managed queues (open/closed) — assignment data-layer APIs:
-#   POST /api/queues/                 create a queue for a service
-#   GET  /api/queues/                 list all queues
-#   GET  /api/queues/<queue_id>       get queue details
+#   POST /api/queues/                   create a queue for a service
+#   GET  /api/queues/                   list all queues
+#   GET  /api/queues/<queue_id>         get queue details
 #   PUT  /api/queues/<queue_id>/status  update status (open/closed)
 #
 # User join / leave / serve-next (existing behavior):
-#   POST /api/queues/join
-#   POST /api/queues/leave
-#   GET  /api/queues/mine
-#   GET  /api/queues/service/<service_id>
-#   POST /api/queues/serve-next
-
-from flask import Blueprint, current_app, jsonify, request
-
-from app.controllers import services_queues as ctrl
-=======
-# Queue Management + Wait-Time Estimation Module (Mahmoud Masoud)
-#
-# Users can join/leave a queue and see their position and estimated wait.
-# Administrators can view a service's full queue and serve the next person.
-#
-# Ordering: priority (urgent > high > medium > low), then arrival time.
-# Estimated wait: position in queue * the service's expected duration.
-#
-# Endpoints:
 #   POST /api/queues/join            login required   body: {service_id}
 #   POST /api/queues/leave           login required   body: {service_id}
 #   GET  /api/queues/mine            login required
 #   GET  /api/queues/service/<id>    admin only
 #   POST /api/queues/serve-next      admin only        body: {service_id}
+#
+# Ordering: priority (urgent > high > medium > low), then arrival time.
+# Estimated wait: position in queue * the service's expected duration.
+# Join/leave/serve-next also trigger notifications via app.notifications.
 
 from flask import Blueprint, current_app, jsonify, request
 
->>>>>>> Stashed changes
+from app.controllers import services_queues as ctrl
 from app.notifications import is_almost_ready, notify_almost_ready, notify_joined
 from app.utils import admin_required, login_required
 
@@ -47,7 +31,17 @@ def _estimate_wait(service, position):
     return position * duration
 
 
-<<<<<<< Updated upstream
+def _notify_now_almost_ready(store, service_id):
+    """After a leave/serve shifts everyone up, alert anyone who's now close
+    to the front. Called from leave_queue and serve_next."""
+    for entry in store.list_queue(service_id):
+        position = entry.get("position")
+        if position and is_almost_ready(position):
+            notify_almost_ready(
+                store, user_id=entry["user_id"], service_id=service_id, position=position,
+            )
+
+
 # ---- Managed queue CRUD (assignment) -----------------------------------------
 
 @queues_bp.post("/")
@@ -73,18 +67,6 @@ def update_queue_status(admin_user, queue_id):
 
 
 # ---- Join / leave / serve (people in line) -----------------------------------
-=======
-def _notify_now_almost_ready(store, service_id):
-    """After a leave/serve shifts everyone up, alert anyone who's now close
-    to the front. Called from leave_queue and serve_next."""
-    for entry in store.list_queue(service_id):
-        position = entry.get("position")
-        if position and is_almost_ready(position):
-            notify_almost_ready(
-                store, user_id=entry["user_id"], service_id=service_id, position=position,
-            )
-
->>>>>>> Stashed changes
 
 @queues_bp.post("/join")
 @login_required
@@ -99,13 +81,10 @@ def join_queue(user):
     if not service:
         return jsonify({"message": "Service not found"}), 404
 
-<<<<<<< Updated upstream
     managed = store.get_queue_for_service(service_id)
     if managed and managed["status"] == "closed":
         return jsonify({"message": "This queue is closed"}), 400
 
-=======
->>>>>>> Stashed changes
     try:
         entry, position = store.join_queue(user_id=user["id"], service_id=service_id)
     except ValueError as e:
@@ -142,10 +121,7 @@ def leave_queue(user):
         return jsonify({"message": "You are not in this queue"}), 404
 
     store.add_history_entry(user_id=user["id"], service_id=service_id, action="left")
-<<<<<<< Updated upstream
-=======
     _notify_now_almost_ready(store, service_id)
->>>>>>> Stashed changes
     return jsonify({"message": "Left the queue"}), 200
 
 
@@ -170,7 +146,6 @@ def service_queue(admin_user, service_id):
         entry["position"] = i + 1
         entry["estimated_wait_minutes"] = _estimate_wait(service, i + 1)
 
-<<<<<<< Updated upstream
     managed = store.get_queue_for_service(service_id)
     return jsonify({
         "service_id": service_id,
@@ -178,9 +153,6 @@ def service_queue(admin_user, service_id):
         "queue": entries,
         "count": len(entries),
     }), 200
-=======
-    return jsonify({"service_id": service_id, "queue": entries, "count": len(entries)}), 200
->>>>>>> Stashed changes
 
 
 @queues_bp.post("/serve-next")
@@ -201,22 +173,5 @@ def serve_next(admin_user):
         return jsonify({"message": "Queue is empty"}), 404
 
     store.add_history_entry(user_id=entry["user_id"], service_id=service_id, action="served")
-<<<<<<< Updated upstream
-
-    # After serving, alert anyone who is now near the front
-    remaining = store.list_queue(service_id)
-    for i, waiting in enumerate(remaining):
-        position = i + 1
-        if is_almost_ready(position):
-            notify_almost_ready(
-                store,
-                user_id=waiting["user_id"],
-                service_id=service_id,
-                position=position,
-            )
-
-    return jsonify({"served": entry}), 200
-=======
     _notify_now_almost_ready(store, service_id)
     return jsonify({"served": entry}), 200
->>>>>>> Stashed changes

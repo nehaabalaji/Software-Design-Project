@@ -175,8 +175,6 @@ def test_serve_next_on_empty_queue(client, store):
         "/api/queues/serve-next", json={"service_id": service["id"]}, headers=auth_header(admin_token)
     )
     assert resp.status_code == 404
-<<<<<<< Updated upstream
-=======
 
 
 def test_leave_queue_marks_status_canceled_not_deleted(client, store):
@@ -291,4 +289,3 @@ def test_serve_next_notifies_new_front_of_line(client, store):
     # they should now have received at least one almost_ready alert.
     kinds = {n["kind"] for n in store.list_notifications(user2["id"])}
     assert "almost_ready" in kinds
->>>>>>> Stashed changes
