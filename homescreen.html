@@ -741,9 +741,9 @@
         </div>
         <nav class="nav" id="nav"></nav>
         <div class="side-foot">
-          <div class="avatar">AR</div>
+          <div class="avatar" id="sidebar-avatar">?</div>
           <div>
-            <div class="avatar-name">Alex Rivera</div>
+            <div class="avatar-name" id="sidebar-name">&nbsp;</div>
             <div class="avatar-sub">Member</div>
           </div>
         </div>
@@ -785,8 +785,33 @@
       let SERVICES = [];
       let HISTORY = [];
       let NOTIFICATIONS = [];
+      let PROFILE = null; // /api/profile/me response, or null if not created yet
       let state = { tab: "dashboard", active: null };
       let sel = null;
+
+      function currentDisplayName() {
+        if (PROFILE && PROFILE.full_name) return PROFILE.full_name;
+        return displayName(user);
+      }
+
+      function initialsFor(name) {
+        const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return "?";
+        return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+      }
+
+      function renderIdentity() {
+        const name = currentDisplayName();
+        const nameEl = document.getElementById("sidebar-name");
+        const avatarEl = document.getElementById("sidebar-avatar");
+        if (nameEl) nameEl.textContent = name;
+        if (avatarEl) avatarEl.textContent = initialsFor(name);
+      }
+
+      async function loadProfile() {
+        const result = await apiGet("/api/profile/me");
+        PROFILE = result.ok ? result.data.profile : null;
+      }
 
       const NAV = [
         {
@@ -808,6 +833,11 @@
           id: "history",
           label: "History",
           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
+        },
+        {
+          id: "profile",
+          label: "Profile",
+          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
         },
       ];
       const CHECK =
@@ -967,7 +997,7 @@
           )
           .join("") || `<div class="empty-text">No notifications yet.</div>`;
         return `<div class="page">
-    <h1>Hi, ${displayName(user)}</h1>
+    <h1>Hi, ${currentDisplayName()}</h1>
     <p class="sub">Here's what's happening right now.</p>
     ${activeBlock}
     <div class="section-label">Active services</div>
@@ -1038,6 +1068,63 @@
         return `<div class="page"><h1>History</h1><p class="sub">Your past queues.</p>
     <div class="table"><div class="thead"><span>Service</span><span>Date</span><span class="right">Outcome</span></div>${rows}</div></div>`;
       }
+
+      function profileScreen() {
+        const p = PROFILE || {};
+        return `<div class="page">
+    <h1>Profile</h1>
+    <p class="sub">This name is shown across QueueSmart instead of your email.</p>
+    <div class="est-box" style="flex-direction:column; align-items:stretch; gap:14px;">
+      <div>
+        <div class="est-label">Full name</div>
+        <input id="profile-name" type="text" maxlength="200" value="${(p.full_name || "").replace(/"/g, "&quot;")}" placeholder="e.g. Vasavi Chenna"
+          style="width:100%; margin-top:6px; padding:11px 13px; font-size:14.5px; font-family:inherit; border:1.5px solid #e2e8f0; border-radius:10px;" />
+      </div>
+      <div>
+        <div class="est-label">Phone <span style="font-weight:400;">(optional)</span></div>
+        <input id="profile-phone" type="text" maxlength="30" value="${(p.phone || "").replace(/"/g, "&quot;")}" placeholder="e.g. 555-0100"
+          style="width:100%; margin-top:6px; padding:11px 13px; font-size:14.5px; font-family:inherit; border:1.5px solid #e2e8f0; border-radius:10px;" />
+      </div>
+      <div id="profile-error" style="color:#dc2626; font-size:13px;"></div>
+      <button class="join-btn" id="profile-save" onclick="saveProfile()">${PROFILE ? "Save changes" : "Create profile"}</button>
+    </div>
+  </div>`;
+      }
+
+      async function saveProfile() {
+        const fullName = document.getElementById("profile-name").value.trim();
+        const phone = document.getElementById("profile-phone").value.trim();
+        const errorEl = document.getElementById("profile-error");
+        const btn = document.getElementById("profile-save");
+        errorEl.textContent = "";
+
+        if (!fullName) {
+          errorEl.textContent = "Full name is required.";
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+
+        const payload = { full_name: fullName, phone };
+        const result = PROFILE
+          ? await apiPut("/api/profile/me", payload)
+          : await apiPost("/api/profile/me", payload);
+
+        btn.disabled = false;
+        btn.textContent = PROFILE ? "Save changes" : "Create profile";
+
+        if (!result.ok) {
+          const errs = result.data.errors || {};
+          errorEl.textContent = errs.full_name || errs.phone || result.data.message || "Could not save profile";
+          return;
+        }
+
+        PROFILE = result.data.profile;
+        renderIdentity();
+        render();
+      }
+      window.saveProfile = saveProfile;
 
       let notifsOpen = false;
 
@@ -1114,11 +1201,13 @@
 
       function render() {
         renderNav();
+        renderIdentity();
         const views = {
           dashboard,
           join: joinScreen,
           status: statusScreen,
           history: historyScreen,
+          profile: profileScreen,
         };
         document.getElementById("main").innerHTML = views[state.tab]();
         updateBellDot();
@@ -1137,7 +1226,7 @@
           btn.onclick = () => logout();
           topbar.appendChild(btn);
         }
-        await refreshData();
+        await Promise.all([refreshData(), loadProfile()]);
         render();
       })();
     </script>
