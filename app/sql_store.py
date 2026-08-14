@@ -334,7 +334,7 @@ class SQLStore:
         entries = QueueEntry.query.filter_by(service_id=service_id, status="waiting").all()
         return sorted(
             entries,
-            key=lambda e: (-_PRIORITY_WEIGHT.get(e.priority, 0), e.joined_at),
+            key=lambda e: (-_PRIORITY_WEIGHT.get(e.priority, 0), e.joined_at.replace(tzinfo=None)),
         )
 
     def _position(self, service_id, entry_id):

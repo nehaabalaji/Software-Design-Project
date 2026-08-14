@@ -26,7 +26,9 @@ ALMOST_READY_POSITION = 3
 JOINED = "joined"
 ALMOST_READY = "almost_ready"
 SERVED = "served"
-VALID_KINDS = {JOINED, ALMOST_READY, SERVED}
+DELAYED = "delayed"
+POSITION_UPDATE = "position_update"
+VALID_KINDS = {JOINED, ALMOST_READY, SERVED, DELAYED, POSITION_UPDATE}
 
 
 # ----------------------------------------------------------------------
@@ -34,31 +36,58 @@ VALID_KINDS = {JOINED, ALMOST_READY, SERVED}
 # They mirror how queues.py already calls store.add_history_entry(...).
 # ----------------------------------------------------------------------
 
-def notify_joined(store, *, user_id, service_id, position):
+def _greeting(name):
+    return f"{name}, you" if name else "You"
+
+
+def notify_joined(store, *, user_id, service_id, position, name=""):
     """Call when a user joins a queue."""
-    message = f"You joined the queue at position {position}."
+    prefix = _greeting(name)
+    message = f"{prefix} joined the queue at position {position}."
     return store.add_notification(
-        user_id=user_id,
-        service_id=service_id,
-        kind=JOINED,
-        message=message,
+        user_id=user_id, service_id=service_id, kind=JOINED, message=message,
     )
 
 
-def notify_almost_ready(store, *, user_id, service_id, position):
+def notify_served(store, *, user_id, service_id, name=""):
+    """Call when a user reaches the front and is served."""
+    prefix = _greeting(name)
+    message = f"{prefix}'ve been served — thank you for your patience!"
+    return store.add_notification(
+        user_id=user_id, service_id=service_id, kind=SERVED, message=message,
+    )
+
+
+def notify_almost_ready(store, *, user_id, service_id, position, name=""):
     """Call when a user moves close to the front of the queue."""
+    prefix = _greeting(name)
     ahead = position - 1
     if ahead <= 0:
-        message = "You're next -- please be ready."
+        message = f"{prefix}'re next — please be ready."
     elif ahead == 1:
-        message = "Almost your turn -- 1 person ahead of you."
+        message = f"{prefix}'re almost up — 1 person ahead of you."
     else:
-        message = f"Almost your turn -- {ahead} people ahead of you."
+        message = f"{prefix}'re almost up — {ahead} people ahead of you."
     return store.add_notification(
-        user_id=user_id,
-        service_id=service_id,
-        kind=ALMOST_READY,
-        message=message,
+        user_id=user_id, service_id=service_id, kind=ALMOST_READY, message=message,
+    )
+
+
+def notify_delayed(store, *, user_id, service_id, position, name=""):
+    """Call when a user is moved back past the almost-ready threshold."""
+    prefix = _greeting(name)
+    message = f"{prefix}'ve been moved to position {position} — there may be a short delay."
+    return store.add_notification(
+        user_id=user_id, service_id=service_id, kind=DELAYED, message=message,
+    )
+
+
+def notify_position_update(store, *, user_id, service_id, position, name=""):
+    """Call when a user's position changes but stays outside the almost-ready zone."""
+    prefix = _greeting(name)
+    message = f"{prefix}'ve been moved to position {position}."
+    return store.add_notification(
+        user_id=user_id, service_id=service_id, kind=POSITION_UPDATE, message=message,
     )
 
 

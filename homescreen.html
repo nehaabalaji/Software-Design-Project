@@ -947,8 +947,9 @@
         render();
       }
 
-      function go(tab) {
+      async function go(tab) {
         state.tab = tab;
+        await refreshData();
         render();
       }
       window.join = join;
@@ -1196,12 +1197,15 @@
         if (dot) dot.classList.toggle("hidden", !hasUnread);
       }
 
-      function toggleNotifs(e) {
+      async function toggleNotifs(e) {
         e.stopPropagation();
         notifsOpen = !notifsOpen;
         const panel = document.getElementById("notif-panel");
         panel.classList.toggle("hidden", !notifsOpen);
-        if (notifsOpen) renderNotifPanel();
+        if (notifsOpen) {
+          await pollNotifications();
+          renderNotifPanel();
+        }
       }
 
       async function dismissNotif(e, index) {
@@ -1247,9 +1251,34 @@
         updateBellDot();
       }
 
+      async function pollNotifications() {
+        const result = await apiGet("/api/notifications/");
+        if (!result.ok) return;
+        const fresh = (result.data.notifications || []).map((n) => ({
+          id: n.id,
+          title: n.kind === "almost_ready" ? "Almost your turn"
+               : n.kind === "joined"       ? "Joined queue"
+               : n.kind === "served"       ? "You've been served"
+               : n.kind === "delayed"         ? "Queue delay"
+               : n.kind === "position_update" ? "Position update"
+               : "Update",
+          text: n.message,
+          time: (n.timestamp || "").replace("T", " ").slice(0, 16),
+          unread: !n.read,
+        }));
+        const hadUnread = NOTIFICATIONS.some((n) => n.unread);
+        NOTIFICATIONS = fresh;
+        updateBellDot();
+        if (notifsOpen) renderNotifPanel();
+        // If the user gained new unread notifications, also refresh queue data
+        const hasUnread = NOTIFICATIONS.some((n) => n.unread);
+        if (hasUnread && !hadUnread) {
+          await refreshData();
+          render();
+        }
+      }
+
       (async function init() {
-        const logoutBtn = document.querySelector(".topbar .bell");
-        // Add logout control next to bell if missing
         const topbar = document.querySelector(".topbar");
         if (topbar && !document.getElementById("logout-btn")) {
           const btn = document.createElement("button");
@@ -1262,6 +1291,7 @@
         }
         await Promise.all([refreshData(), loadProfile()]);
         render();
+        setInterval(pollNotifications, 15000);
       })();
     </script>
   </body>

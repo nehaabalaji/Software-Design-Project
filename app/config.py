@@ -11,9 +11,9 @@ load_dotenv()
 
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
 DB_PORT = os.environ.get("DB_PORT", "3306")
-DB_USER = os.environ.get("DB_USER", "queuesmart")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "queuesmart_dev_pw")
-DB_NAME = os.environ.get("DB_NAME", "queuesmart_dev")
+DB_USER = os.environ.get("DB_USER", "root")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+DB_NAME = os.environ.get("DB_NAME", "software_design_project")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SQLITE_PATH = _PROJECT_ROOT / "queuesmart.db"
