@@ -298,6 +298,60 @@ def remove_queue_entry(admin_user, entry_id):
     return jsonify({"message": "User removed from queue", "entry_id": entry_id}), 200
 
 
+@queues_bp.post("/admin-add")
+@admin_required
+def admin_add_to_queue(admin_user):
+    """Admin adds a specific user to a queue by their email address."""
+    from app.models import User
+
+    data = request.get_json(silent=True) or {}
+    service_id = data.get("service_id")
+    user_email = (data.get("user_email") or "").strip().lower()
+
+    if not service_id:
+        return jsonify({"message": "service_id is required"}), 400
+    if not user_email:
+        return jsonify({"message": "user_email is required"}), 400
+
+    store = current_app.config["STORE"]
+    service = store.get_service(service_id)
+    if not service:
+        return jsonify({"message": "Service not found"}), 404
+
+    managed = store.get_queue_for_service(service_id)
+    if managed and managed["status"] == "closed":
+        return jsonify({"message": "This queue is closed"}), 400
+
+    target_user = User.query.filter_by(email=user_email).first()
+    if not target_user:
+        return jsonify({"message": f"No account found for: {user_email}"}), 404
+
+    try:
+        entry, position = store.join_queue(user_id=target_user.id, service_id=service_id)
+    except ValueError as e:
+        return jsonify({"message": str(e)}), 409
+
+    wait_minutes = _estimate_wait(service, position)
+    store.add_history_entry(
+        user_id=target_user.id,
+        service_id=service_id,
+        action="joined",
+        wait_time_minutes=wait_minutes,
+        position_at_join=position,
+    )
+    name = _display_name(store, target_user.id)
+    notify_joined(store, user_id=target_user.id, service_id=service_id, position=position, name=name)
+    if is_almost_ready(position):
+        notify_almost_ready(store, user_id=target_user.id, service_id=service_id, position=position, name=name)
+    svc_name = service.get("name", "queue")
+    _notify_admins(store, service_id, "joined",
+                   f"{name} added to {svc_name} at position {position} by admin.")
+
+    entry["position"] = position
+    entry["estimated_wait_minutes"] = wait_minutes
+    return jsonify({"entry": entry, "user_email": target_user.email}), 201
+
+
 @queues_bp.post("/serve-next")
 @admin_required
 def serve_next(admin_user):

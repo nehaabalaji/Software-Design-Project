@@ -281,10 +281,27 @@
       .report-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; }
       .report-table tr:last-child td { border-bottom: none; }
 
+      /* Add-to-queue form */
+      .add-user-card {
+        background: #fff; border: 1px solid #eef2f6; border-radius: 20px;
+        padding: 22px 24px; margin-top: 24px;
+      }
+      .add-user-row {
+        display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+      }
+      .add-user-row .field { margin-bottom: 0; flex: 1; min-width: 200px; }
+      .add-user-feedback {
+        margin-top: 10px; font-size: 13.5px; font-weight: 600;
+        padding: 10px 14px; border-radius: 10px; display: none;
+      }
+      .add-user-feedback.success { display: block; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4; }
+      .add-user-feedback.error   { display: block; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+
       @media (max-width: 720px) {
         .sidebar { display: none; }
         .svc-row { flex-direction: column; align-items: flex-start; gap: 14px; }
         .queue-toolbar { flex-direction: column; align-items: stretch; }
+        .add-user-row { flex-direction: column; align-items: stretch; }
       }
     </style>
   </head>
@@ -586,6 +603,45 @@
         const el = document.getElementById("served-banner");
         if (el) el.classList.remove("show");
       }
+      async function adminAddToQueue() {
+        const emailInput = document.getElementById("add-user-email");
+        const feedback = document.getElementById("add-user-feedback");
+        if (!emailInput || !feedback) return;
+
+        const email = emailInput.value.trim();
+        feedback.className = "add-user-feedback";
+        feedback.textContent = "";
+
+        if (!email) {
+          feedback.textContent = "Please enter a user email.";
+          feedback.classList.add("error");
+          return;
+        }
+
+        const result = await apiPost("/api/queues/admin-add", {
+          service_id: state.queueServiceId,
+          user_email: email,
+        });
+
+        if (!result.ok) {
+          feedback.textContent = result.data.message || "Could not add user to queue.";
+          feedback.classList.add("error");
+          return;
+        }
+
+        const successMsg = `${result.data.user_email} added to the queue at position ${result.data.entry.position}.`;
+        emailInput.value = "";
+        await loadServicesFromApi(); // reloads services and live queue
+        render();
+        // Restore feedback after render replaces the DOM
+        const newFeedback = document.getElementById("add-user-feedback");
+        if (newFeedback) {
+          newFeedback.textContent = successMsg;
+          newFeedback.classList.add("success");
+        }
+      }
+
+      window.adminAddToQueue = adminAddToQueue;
       window.selectQueueService = selectQueueService;
       window.moveQueueUser = moveQueueUser;
       window.removeQueueUser = removeQueueUser;
@@ -1094,6 +1150,18 @@
 
           <div class="section-label">In queue (${q.length})</div>
           <div class="queue-card">${rows}</div>
+
+          <div class="add-user-card">
+            <div class="section-label" style="margin-top:0;">Add user to queue</div>
+            <div class="add-user-row">
+              <div class="field">
+                <label for="add-user-email">User email</label>
+                <input id="add-user-email" type="email" placeholder="e.g. user@example.com" autocomplete="off" />
+              </div>
+              <button class="serve-btn" type="button" onclick="adminAddToQueue()">Add to queue</button>
+            </div>
+            <div class="add-user-feedback" id="add-user-feedback"></div>
+          </div>
         </div>`;
       }
 
