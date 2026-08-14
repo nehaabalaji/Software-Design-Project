@@ -13,6 +13,7 @@ from app.sql_store import SQLStore
 from app.notifications import notifications_bp
 from app import models  # noqa: F401 -- registers tables with SQLAlchemy for Flask-Migrate
 from app.profile import profile_bp
+from app.smart import smart_bp
 
 migrate = Migrate()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +49,9 @@ def create_app(store=None):
 
     # UserProfile Module (A4)
     app.register_blueprint(profile_bp, url_prefix="/api/profile")
+
+    # Smart recommendations (partial — see app/smart.py TODOs for the rest)
+    app.register_blueprint(smart_bp, url_prefix="/api/smart")
 
     @app.get("/api/health")
     def health():

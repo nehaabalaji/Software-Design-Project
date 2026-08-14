@@ -788,6 +788,7 @@
       let PROFILE = null; // /api/profile/me response, or null if not created yet
       let state = { tab: "dashboard", active: null };
       let sel = null;
+      let smartRec = null; // set by /api/smart/recommend when a service is selected
 
       function currentDisplayName() {
         if (PROFILE && PROFILE.full_name) return PROFILE.full_name;
@@ -1016,17 +1017,50 @@
       <div class="radio ${on ? "on" : ""}">${on ? CHECK : ""}</div>
     </button>`;
         }).join("") || `<div class="empty-card"><div class="empty-title">No open services</div></div>`;
+
+        let smartBox = "";
+        if (service && smartRec) {
+          if (smartRec.recommendation) {
+            const r = smartRec.recommendation;
+            const recommended = {
+              id: r.service_id,
+              name: r.name,
+              wait: r.estimated_wait_minutes,
+              open: r.queue_length,
+              duration: r.expected_duration,
+            };
+            smartBox = `<div class="est-box" style="margin-top:12px;background:#f0fdfa;border:1px solid #99f6e4;">
+        <div>
+          <div class="est-label">Smart tip</div>
+          <div class="est-value" style="font-size:16px;">Try ${r.name}</div>
+          <div class="row-sub" style="margin-top:6px;">~${r.estimated_wait_minutes} min wait · save ~${r.minutes_saved} min vs ${service.name}</div>
+        </div>
+        <button class="join-btn" type="button" ${state.active ? "disabled" : ""} onclick='join(${JSON.stringify(recommended)})'>${state.active ? "Already in a queue" : "Join recommended"}</button>
+      </div>`;
+          } else {
+            smartBox = `<div class="est-box" style="margin-top:12px;">
+        <div><div class="est-label">Smart tip</div><div class="row-sub">${smartRec.explanation || "No shorter open alternative right now."}</div></div>
+      </div>`;
+          }
+        }
+
         const est = service
           ? `<div class="est-box">
       <div><div class="est-label">Estimated wait</div><div class="est-value">~${service.wait} min</div></div>
       <button class="join-btn" ${state.active ? "disabled" : ""} onclick='join(${JSON.stringify(service)})'>${state.active ? "Already in a queue" : "Join queue"}</button>
-    </div>`
+    </div>${smartBox}`
           : "";
-        return `<div class="page"><h1>Join a queue</h1><p class="sub">Pick a service to see the wait.</p><div class="list">${rows}</div>${est}</div>`;
+        return `<div class="page"><h1>Join a queue</h1><p class="sub">Pick a service to see the wait — we'll suggest a shorter option when one exists.</p><div class="list">${rows}</div>${est}</div>`;
       }
-      function pick(id) {
+      async function pick(id) {
         sel = id;
+        smartRec = null;
         render();
+        const result = await apiGet(`/api/smart/recommend?service_id=${encodeURIComponent(id)}`);
+        if (result.ok) {
+          smartRec = result.data;
+          if (sel === id) render();
+        }
       }
       window.pick = pick;
 
