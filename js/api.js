@@ -1,5 +1,7 @@
 const API_BASE_URL =
-  window.location.port === '5000' ? '' : 'http://127.0.0.1:5000';
+  window.location.protocol === 'file:'
+    ? 'http://127.0.0.1:5001'
+    : '';
 
 function authHeaders() {
   const token = localStorage.getItem('queuesmart_token');

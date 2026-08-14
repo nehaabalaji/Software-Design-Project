@@ -44,7 +44,8 @@ class Service(db.Model):
 
     __tablename__ = "services"
     __table_args__ = (
-        db.CheckConstraint("CHAR_LENGTH(TRIM(name)) > 0", name="chk_services_name_not_empty"),
+        # length()/trim() work on both MySQL and SQLite
+        db.CheckConstraint("length(trim(name)) > 0", name="chk_services_name_not_empty"),
         db.CheckConstraint("duration > 0", name="chk_services_duration_positive"),
     )
 
@@ -82,7 +83,7 @@ class Queue(db.Model):
         unique=True,
         index=True,
     )
-    status = db.Column(db.Enum("open", "closed", name="queue_status"), nullable=False, default="open")
+    status = db.Column(db.String(20), nullable=False, default="open")
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     service = db.relationship("Service", back_populates="managed_queue")

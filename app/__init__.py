@@ -28,36 +28,31 @@ def create_app(store=None):
     db.init_app(app)
     migrate.init_app(app, db)
 
+    # Local SQLite fallback: create tables automatically (no flask db upgrade needed)
+    if config.USING_SQLITE:
+        with app.app_context():
+            db.create_all()
+
     # store=... lets tests inject InMemoryStore (app/store.py); the real app
-    # defaults to MySQL via SQLStore (app/sql_store.py).
+    # defaults to SQLStore (MySQL when available, otherwise SQLite).
     app.config["STORE"] = store or SQLStore()
 
-    # Authentication Module (done)
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
-
-    # Service Management Module (done)
     app.register_blueprint(services_bp, url_prefix="/api/services")
-
-    # Queue Management Module (done)
     app.register_blueprint(queues_bp, url_prefix="/api/queues")
-
-    # History Module (done)
     app.register_blueprint(history_bp, url_prefix="/api/history")
-
-    # Notification Module
     app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
-
-    # UserProfile Module (A4)
     app.register_blueprint(profile_bp, url_prefix="/api/profile")
-
-    # Smart recommendations (partial — see app/smart.py TODOs for the rest)
     app.register_blueprint(smart_bp, url_prefix="/api/smart")
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "app": "QueueSmart"}
+        return {
+            "status": "ok",
+            "app": "QueueSmart",
+            "database": "sqlite" if config.USING_SQLITE else "mysql",
+        }
 
-    # Serve the website (HTML/CSS/JS) from the same server as the API
     @app.get("/")
     def site_index():
         return send_from_directory(PROJECT_ROOT, "index.html")
